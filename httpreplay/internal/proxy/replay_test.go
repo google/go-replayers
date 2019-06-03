@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"testing"
 
-	"cloud.google.com/go/internal/testutil"
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestParseRequestBody(t *testing.T) {
@@ -51,7 +51,7 @@ func TestParseRequestBody(t *testing.T) {
 		if gotMediaType != wantMediaType {
 			t.Errorf("#%d: got %q, want %q", i, gotMediaType, wantMediaType)
 		}
-		if diff := testutil.Diff(gotParts, wantParts); diff != "" {
+		if diff := cmp.Diff(gotParts, wantParts); diff != "" {
 			t.Errorf("#%d: %s", i, diff)
 		}
 	}

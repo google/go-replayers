@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloud.google.com/go/internal/testutil"
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/martian"
 )
@@ -77,7 +77,7 @@ func TestLogger(t *testing.T) {
 			},
 		},
 	}
-	if diff := testutil.Diff(lg.Entries, want); diff != "" {
+	if diff := cmp.Diff(lg.Entries, want); diff != "" {
 		t.Error(diff)
 	}
 }
@@ -143,7 +143,7 @@ func TestToHTTPResponse(t *testing.T) {
 	} {
 		got := toHTTPResponse(test.lr, test.req)
 		got.Body = nil
-		if diff := testutil.Diff(got, test.want, cmpopts.IgnoreUnexported(http.Request{})); diff != "" {
+		if diff := cmp.Diff(got, test.want, cmpopts.IgnoreUnexported(http.Request{})); diff != "" {
 			t.Errorf("%s: %s", test.desc, diff)
 		}
 	}

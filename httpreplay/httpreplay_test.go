@@ -14,10 +14,14 @@
 
 package httpreplay_test
 
+// This test requires a Google Cloud project ID.
+// See the flag below.
+
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -28,9 +32,13 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-replayers/httpreplay"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 )
+
+var projectID = flag.String("project", "", "Google Cloud project ID")
 
 func TestIntegration_RecordAndReplay(t *testing.T) {
 	httpreplay.DebugHeaders()
@@ -39,9 +47,8 @@ func TestIntegration_RecordAndReplay(t *testing.T) {
 	}
 	replayFilename := tempFilename(t, "RecordAndReplay*.replay")
 	defer os.Remove(replayFilename)
-	projectID := testutil.ProjID()
-	if projectID == "" {
-		t.Skip("Need project ID. See CONTRIBUTING.md for details.")
+	if *projectID == "" {
+		t.Fatal("need -project")
 	}
 	ctx := context.Background()
 
@@ -55,8 +62,11 @@ func TestIntegration_RecordAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hc, err := rec.Client(ctx, option.WithTokenSource(
-		testutil.TokenSource(ctx, storage.ScopeFullControl)))
+	ts, err := google.DefaultTokenSource(ctx, storage.ScopeFullControl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc, err := rec.Client(ctx, option.WithTokenSource(ts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +89,7 @@ func TestIntegration_RecordAndReplay(t *testing.T) {
 	gota, gotc := run(t, hc)
 	testReadCRC(t, hc, "replaying")
 
-	if diff := testutil.Diff(gota, wanta); diff != "" {
+	if diff := cmp.Diff(gota, wanta); diff != "" {
 		t.Error(diff)
 	}
 	if !bytes.Equal(gotc, wantc) {
@@ -103,7 +113,7 @@ func run(t *testing.T, hc *http.Client) (*storage.BucketAttrs, []byte) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	b := client.Bucket(testutil.ProjID())
+	b := client.Bucket(*projectID)
 	attrs, err := b.Attrs(ctx)
 	if err != nil {
 		t.Fatal(err)

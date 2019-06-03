@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"testing"
 
-	"cloud.google.com/go/internal/testutil"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -75,7 +74,7 @@ func TestConvertRequest(t *testing.T) {
 		t.Error(diff)
 	}
 	// The original headers should be the same.
-	if got, want := in.Header, origHeader; !testutil.Equal(got, want) {
+	if got, want := in.Header, origHeader; !cmp.Equal(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
 }

@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// This test requires a Google Cloud project ID.
+// See the flag below.
+
 package main_test
 
 import (
@@ -19,6 +22,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -30,20 +34,22 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/internal/testutil"
 	"cloud.google.com/go/storage"
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 )
 
 const initial = "initial state"
 
+var projectID = flag.String("project", "", "Google Cloud project ID")
+
 func TestIntegration_HTTPR(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Integration tests skipped in short mode")
 	}
-	if testutil.ProjID() == "" {
-		t.Fatal("set GCLOUD_TESTS_GOLANG_PROJECT_ID and GCLOUD_TESTS_GOLANG_KEY")
+	if *projectID == "" {
+		t.Fatal("need -project")
 	}
 	// Get a unique temporary filename.
 	f, err := ioutil.TempFile("", "httpreplay")
@@ -75,10 +81,15 @@ func runRecord(t *testing.T, filename string) string {
 	defer stop(t, cmd)
 
 	ctx := context.Background()
+	ts, err := google.DefaultTokenSource(ctx, storage.ScopeFullControl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	hc := &http.Client{
 		Transport: &oauth2.Transport{
 			Base:   tr,
-			Source: testutil.TokenSource(ctx, storage.ScopeFullControl),
+			Source: ts,
 		},
 	}
 	res, err := http.Post(
@@ -206,7 +217,7 @@ func getBucketInfo(ctx context.Context, hc *http.Client) (string, error) {
 		return "", err
 	}
 	defer client.Close()
-	b := client.Bucket(testutil.ProjID())
+	b := client.Bucket(*projectID)
 	attrs, err := b.Attrs(ctx)
 	if err != nil {
 		return "", err

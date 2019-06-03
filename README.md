@@ -1,12 +1,11 @@
 # Go Tools for Recording and Replaying RPCs
 
-This repo contains two proxies for testing network clients by recording real
+This repo contains two tools for testing network clients by recording real
 interactions with servers, then playing back the server responses later. These
-tools are proxies that intercept network traffic. A record/replay proxy lets you
-run an "integration" test that accesses a backend and record the interaction.
-Subsequent runs of the test can replay the server's responses without actually
-contacting the server, turning the integration test into a fast and inexpensive
-unit test.
+record/replay proxies let you run an "integration" test that accesses a backend
+and record the interaction. Subsequent runs of the test can replay the server's
+responses without actually contacting the server, turning the integration test
+into a fast and inexpensive unit test.
 
 To use a record/replay proxy:
 

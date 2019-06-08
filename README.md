@@ -18,11 +18,14 @@ To use a record/replay proxy:
 
 ## httpreplay
 
-The httpreplay proxy works with HTTP traffic. You can use the `httpreplay`
-package directly from Go code, or you can run the `httpr` command at
+
+The httpreplay proxy works with HTTP traffic. You can use the [`httpreplay`
+package](https://godoc.org/github.com/google/go-replayers/httpreplay)
+directly from Go code, or you can run the `httpr` command at
 `httpreplay/cmd/httpr` and use a client written in any language.
 
 ## grpcreplay
 
-The `grpcreplay` package works with [gRPC](https://grpc.io) traffic. There is no
-corresponding command.
+The [`grpcreplay` package](https://godoc.org/github.com/google/go-replayers/grpcreplay)
+works with [gRPC](https://grpc.io) traffic. There is no corresponding command.
+

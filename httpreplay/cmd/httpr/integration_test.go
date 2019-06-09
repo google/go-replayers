@@ -45,11 +45,8 @@ const initial = "initial state"
 var projectID = flag.String("project", "", "Google Cloud project ID")
 
 func TestIntegration_HTTPR(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Integration tests skipped in short mode")
-	}
 	if *projectID == "" {
-		t.Fatal("need -project")
+		t.Skip("missing -project; integration tests skipped")
 	}
 	// Get a unique temporary filename.
 	f, err := ioutil.TempFile("", "httpreplay")

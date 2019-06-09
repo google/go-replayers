@@ -41,15 +41,12 @@ import (
 var projectID = flag.String("project", "", "Google Cloud project ID")
 
 func TestIntegration_RecordAndReplay(t *testing.T) {
-	httpreplay.DebugHeaders()
-	if testing.Short() {
-		t.Skip("Integration tests skipped in short mode")
+	if *projectID == "" {
+		t.Skip("missing -project; integration tests skipped")
 	}
+	httpreplay.DebugHeaders()
 	replayFilename := tempFilename(t, "RecordAndReplay*.replay")
 	defer os.Remove(replayFilename)
-	if *projectID == "" {
-		t.Fatal("need -project")
-	}
 	ctx := context.Background()
 
 	// Record.

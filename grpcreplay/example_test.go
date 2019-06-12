@@ -39,7 +39,7 @@ func Example_NewRecorder() {
 }
 
 func Example_NewReplayer() {
-	rep, err := grpcreplay.NewReplayer("service.replay")
+	rep, err := grpcreplay.NewReplayer("service.replay", nil)
 	if err != nil {
 		// TODO: Handle error.
 	}

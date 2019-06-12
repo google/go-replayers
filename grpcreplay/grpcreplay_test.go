@@ -250,7 +250,7 @@ func record(t *testing.T, run func(*testing.T, *grpc.ClientConn)) *bytes.Buffer 
 	defer srv.stop()
 
 	buf := &bytes.Buffer{}
-	rec, err := NewRecorderWriter(buf, initialState)
+	rec, err := NewRecorderWriter(buf, &RecorderOptions{Initial: initialState})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func record(t *testing.T, run func(*testing.T, *grpc.ClientConn)) *bytes.Buffer 
 }
 
 func replay(t *testing.T, buf *bytes.Buffer, run func(*testing.T, *grpc.ClientConn)) {
-	rep, err := NewReplayerReader(buf)
+	rep, err := NewReplayerReader(buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,12 +449,11 @@ func TestRecorderBeforeFunc(t *testing.T) {
 			defer srv.stop()
 
 			var b bytes.Buffer
-			r, err := NewRecorderWriter(&b, nil)
+			r, err := NewRecorderWriter(&b, &RecorderOptions{BeforeWrite: tc.f})
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			r.BeforeFunc = tc.f
 			ctx := context.Background()
 			conn, err := grpc.DialContext(ctx, srv.Addr, append([]grpc.DialOption{grpc.WithInsecure()}, r.DialOptions()...)...)
 			if err != nil {
@@ -561,13 +560,12 @@ func TestReplayerBeforeFunc(t *testing.T) {
 			}
 			rec.Close()
 
-			rep, err := NewReplayerReader(&b)
+			rep, err := NewReplayerReader(&b, &ReplayerOptions{BeforeMatch: tc.f})
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			rep.BeforeFunc = tc.f
-			conn, err = grpc.DialContext(ctx, srv.Addr, append([]grpc.DialOption{grpc.WithInsecure()}, rep.DialOptions()...)...)
+			conn, err = rep.Connection()
 			if err != nil {
 				t.Error(err)
 				return

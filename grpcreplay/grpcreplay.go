@@ -38,31 +38,38 @@ import (
 
 // A Recorder records RPCs for later playback.
 type Recorder struct {
+	opts *RecorderOptions
 	mu   sync.Mutex
 	w    *bufio.Writer
 	f    *os.File
 	next int
 	err  error
-	// BeforeFunc defines a function that can inspect and modify requests and responses
-	// written to the replay file. It does not modify messages sent to the service.
-	// It is run once before a request is written to the replay file, and once before a response
-	// is written to the replay file.
-	// The function is called with the method name and the message that triggered the callback.
-	// If the function returns an error, the error will be returned to the client.
-	// This is only executed for unary RPCs; streaming RPCs are not supported.
-	BeforeFunc func(string, proto.Message) error
 }
 
-// NewRecorder creates a recorder that writes to filename. The file will
-// also store the initial bytes for retrieval during replay.
+// RecorderOptions are options for a Recorder.
+type RecorderOptions struct {
+	// The initial state, stored in the output file for retrieval during replay.
+	Initial []byte
+
+	// A function that can inspect and modify requests and responses written to the
+	// replay file. It does not modify messages sent to the service.
+	//
+	// The function is called with the method name and the message for each unary
+	// request and response, before the messages are written to the replay file. If
+	// the function returns an error, the error will be returned to the client.
+	// Streaming RPCs are not supported.
+	BeforeWrite func(method string, msg proto.Message) error
+}
+
+// NewRecorder creates a recorder that writes to filename.
 //
 // You must call Close on the Recorder to ensure that all data is written.
-func NewRecorder(filename string, initial []byte) (*Recorder, error) {
+func NewRecorder(filename string, opts *RecorderOptions) (*Recorder, error) {
 	f, err := os.Create(filename)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := NewRecorderWriter(f, initial)
+	rec, err := NewRecorderWriter(f, opts)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
@@ -71,16 +78,18 @@ func NewRecorder(filename string, initial []byte) (*Recorder, error) {
 	return rec, nil
 }
 
-// NewRecorderWriter creates a recorder that writes to w. The initial
-// bytes will also be written to w for retrieval during replay.
+// NewRecorderWriter creates a recorder that writes to w.
 //
 // You must call Close on the Recorder to ensure that all data is written.
-func NewRecorderWriter(w io.Writer, initial []byte) (*Recorder, error) {
+func NewRecorderWriter(w io.Writer, opts *RecorderOptions) (*Recorder, error) {
+	if opts == nil {
+		opts = &RecorderOptions{}
+	}
 	bw := bufio.NewWriter(w)
-	if err := writeHeader(bw, initial); err != nil {
+	if err := writeHeader(bw, opts.Initial); err != nil {
 		return nil, err
 	}
-	return &Recorder{w: bw, next: 1}, nil
+	return &Recorder{w: bw, opts: opts, next: 1}, nil
 }
 
 // DialOptions returns the options that must be passed to grpc.Dial
@@ -116,8 +125,8 @@ func (r *Recorder) interceptUnary(ctx context.Context, method string, req, res i
 		msg:    message{msg: proto.Clone(req.(proto.Message))},
 	}
 
-	if r.BeforeFunc != nil {
-		if err := r.BeforeFunc(method, ereq.msg.msg); err != nil {
+	if r.opts.BeforeWrite != nil {
+		if err := r.opts.BeforeWrite(method, ereq.msg.msg); err != nil {
 			return err
 		}
 	}
@@ -141,8 +150,8 @@ func (r *Recorder) interceptUnary(ctx context.Context, method string, req, res i
 		return ierr
 	}
 	eres.msg.set(proto.Clone(res.(proto.Message)), ierr)
-	if r.BeforeFunc != nil {
-		if err := r.BeforeFunc(method, eres.msg.msg); err != nil {
+	if r.opts.BeforeWrite != nil {
+		if err := r.opts.BeforeWrite(method, eres.msg.msg); err != nil {
 			return err
 		}
 	}
@@ -242,18 +251,22 @@ func (rcs *recClientStream) CloseSend() error {
 
 // A Replayer replays a set of RPCs saved by a Recorder.
 type Replayer struct {
-	initial []byte                                // initial state
-	log     func(format string, v ...interface{}) // for debugging
+	opts    *ReplayerOptions
+	initial []byte // initial state
 
 	mu      sync.Mutex
 	calls   []*call
 	streams []*stream
-	// BeforeFunc defines a function that can inspect and modify requests before they
-	// are matched for responses from the replay file.
-	// The function is called with the method name and the message that triggered the callback.
-	// If the function returns an error, the error will be returned to the client.
-	// This is only executed for unary RPCs; streaming RPCs are not supported.
-	BeforeFunc func(string, proto.Message) error
+}
+
+// ReplayerOptions are options for a Replayer.
+type ReplayerOptions struct {
+	// BeforeMatch defines a function that can inspect and modify requests before
+	// they are matched for responses from the replay file. The function is called
+	// with the method name and the message. If the function returns an error, the
+	// error will be returned to the client. This is only executed for unary RPCs;
+	// streaming RPCs are not supported.
+	BeforeMatch func(methodName string, msg proto.Message) error
 }
 
 // A call represents a unary RPC, with a request and response (or error).
@@ -274,20 +287,21 @@ type stream struct {
 }
 
 // NewReplayer creates a Replayer that reads from filename.
-func NewReplayer(filename string) (*Replayer, error) {
+func NewReplayer(filename string, opts *ReplayerOptions) (*Replayer, error) {
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return NewReplayerReader(f)
+	return NewReplayerReader(f, opts)
 }
 
 // NewReplayerReader creates a Replayer that reads from r.
-func NewReplayerReader(r io.Reader) (*Replayer, error) {
-	rep := &Replayer{
-		log: func(string, ...interface{}) {},
+func NewReplayerReader(r io.Reader, opts *ReplayerOptions) (*Replayer, error) {
+	if opts == nil {
+		opts = &ReplayerOptions{}
 	}
+	rep := &Replayer{opts: opts}
 	if err := rep.read(r); err != nil {
 		return nil, err
 	}
@@ -389,28 +403,8 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
-// DialOptions returns the options that must be passed to grpc.Dial
-// to enable replaying.
-// Prefer
-func (rep *Replayer) DialOptions() []grpc.DialOption {
-	return []grpc.DialOption{
-		// On replay, we make no RPCs, which means the connection may be closed
-		// before the normally async Dial completes. Making the Dial synchronous
-		// fixes that.
-		grpc.WithBlock(),
-		grpc.WithUnaryInterceptor(rep.interceptUnary),
-		grpc.WithStreamInterceptor(rep.interceptStream),
-	}
-}
-
 // Initial returns the initial state saved by the Recorder.
 func (rep *Replayer) Initial() []byte { return rep.initial }
-
-// SetLogFunc sets a function to be used for debug logging. The function
-// should be safe to be called from multiple goroutines.
-func (rep *Replayer) SetLogFunc(f func(format string, v ...interface{})) {
-	rep.log = f
-}
 
 // Close closes the Replayer.
 func (rep *Replayer) Close() error {
@@ -419,17 +413,15 @@ func (rep *Replayer) Close() error {
 
 func (rep *Replayer) interceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 	mreq := req.(proto.Message)
-	if rep.BeforeFunc != nil {
-		if err := rep.BeforeFunc(method, mreq); err != nil {
+	if rep.opts.BeforeMatch != nil {
+		if err := rep.opts.BeforeMatch(method, mreq); err != nil {
 			return err
 		}
 	}
-	rep.log("request %s (%s)", method, req)
 	call := rep.extractCall(method, mreq)
 	if call == nil {
 		return fmt.Errorf("replayer: request not found: %s", mreq)
 	}
-	rep.log("returning %v", call.response)
 	if call.response.err != nil {
 		return call.response.err
 	}
@@ -438,7 +430,6 @@ func (rep *Replayer) interceptUnary(_ context.Context, method string, req, res i
 }
 
 func (rep *Replayer) interceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
-	rep.log("create-stream %s", method)
 	return &repClientStream{ctx: ctx, rep: rep, method: method}, nil
 }
 

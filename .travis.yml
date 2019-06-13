@@ -9,6 +9,6 @@ env:
   - GO111MODULE=on
 
 script:
-- cd httpreplay; go test ./...
-- cd grpcreplay; go test ./...
+- (cd httpreplay; go test ./...)
+- (cd grpcreplay; go test ./...)
 

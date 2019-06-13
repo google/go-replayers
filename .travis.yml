@@ -2,3 +2,13 @@ language: go
 
 go:
 - 1.12.x
+
+env:
+  global:
+  - GOPROXY=https://proxy.golang.org
+  - GO111MODULE=on
+
+script:
+- cd httpreplay; go test ./...
+- cd grpcreplay; go test ./...
+

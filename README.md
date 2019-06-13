@@ -1,6 +1,6 @@
-![Build Status](https://travis-ci.org/google/go-replayers.svg?branch=master)
-![godoc](https://godoc.org/github.com/google/go-replayers?status.svg)
-![Go Report Card](https://goreportcard.com/badge/github.com/google/go-replayers)
+[![Build Status](https://travis-ci.org/google/go-replayers.svg?branch=master)](https://travis-ci.org/google/go-replayers)
+[![godoc](https://godoc.org/github.com/google/go-replayers?status.svg)](https://godoc.org/github.com/google/go-replayers)
+[![Go Report Card](https://goreportcard.com/badge/github.com/google/go-replayers)](https://goreportcard.com/report/github.com/google/go-replayers)
 
 # Go Tools for Recording and Replaying RPCs
 

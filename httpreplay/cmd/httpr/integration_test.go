@@ -96,7 +96,7 @@ func runRecord(t *testing.T, filename string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.StatusCode != 200 {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("from POST: %s", res.Status)
 	}
 	info, err := getBucketInfo(ctx, hc)
@@ -118,7 +118,7 @@ func runReplay(t *testing.T, filename string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.StatusCode != 200 {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("from GET: %s", res.Status)
 	}
 	bytes, err := ioutil.ReadAll(res.Body)
@@ -228,7 +228,7 @@ func getBody(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode != 200 {
+	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("response: %s", res.Status)
 	}
 	defer res.Body.Close()

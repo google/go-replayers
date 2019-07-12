@@ -34,7 +34,8 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-replayers/httpreplay"
-	"golang.org/x/oauth2/google"
+	googlec "github.com/google/go-replayers/httpreplay/google"
+	googleo "golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 )
 
@@ -59,11 +60,11 @@ func TestIntegration_RecordAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts, err := google.DefaultTokenSource(ctx, storage.ScopeFullControl)
+	ts, err := googleo.DefaultTokenSource(ctx, storage.ScopeFullControl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hc, err := rec.Client(ctx, option.WithTokenSource(ts))
+	hc, err := googlec.RecordClient(ctx, rec.Client(), option.WithTokenSource(ts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +80,7 @@ func TestIntegration_RecordAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rep.Close()
-	hc, err = rep.Client(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	hc = rep.Client()
 	gota, gotc := run(t, hc)
 	testReadCRC(t, hc, "replaying")
 
@@ -277,7 +275,6 @@ func TestRemoveAndClear(t *testing.T) {
 	replayFilename := tempFilename(t, "TestRemoveAndClear*.replay")
 	defer os.Remove(replayFilename)
 
-	ctx := context.Background()
 	// Record
 	rec, err := httpreplay.NewRecorder(replayFilename, nil)
 	if err != nil {
@@ -287,10 +284,7 @@ func TestRemoveAndClear(t *testing.T) {
 	rec.RemoveRequestHeaders("Rem*")
 	rec.ClearQueryParams("c")
 	rec.RemoveQueryParams("r")
-	hc, err := rec.Client(ctx, option.WithoutAuthentication())
-	if err != nil {
-		t.Fatal(err)
-	}
+	hc := rec.Client()
 	query := "k=1&r=2&c=3"
 	req, err := http.NewRequest("GET", srv.URL+"?"+query, nil)
 	if err != nil {
@@ -343,10 +337,7 @@ func TestRemoveAndClear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		hc, err = rep.Client(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		hc = rep.Client()
 		url := srv.URL
 		if test.query != "" {
 			url += "?" + test.query

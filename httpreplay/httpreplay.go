@@ -34,12 +34,9 @@ package httpreplay
 // TODO(jba): add examples.
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/google/go-replayers/httpreplay/internal/proxy"
-	"google.golang.org/api/option"
-	htransport "google.golang.org/api/transport/http"
 )
 
 // A Recorder records HTTP interactions.
@@ -96,22 +93,15 @@ func (r *Recorder) ClearQueryParams(patterns ...string) {
 	r.proxy.ClearQueryParams(patterns)
 }
 
-// Client returns an http.Client to be used for recording. Provide authentication options
-// like option.WithTokenSource as you normally would, or omit them to use Application Default
-// Credentials.
-func (r *Recorder) Client(ctx context.Context, opts ...option.ClientOption) (*http.Client, error) {
-	return proxyClient(ctx, r.proxy, opts...)
-}
-
-func proxyClient(ctx context.Context, p *proxy.Proxy, opts ...option.ClientOption) (*http.Client, error) {
-	trans, err := htransport.NewTransport(ctx, p.Transport(), opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &http.Client{Transport: trans}, nil
+// Client returns an http.Client to be used for recording.
+func (r *Recorder) Client() *http.Client {
+	return &http.Client{Transport: r.proxy.Transport()}
 }
 
 // Close closes the Recorder and saves the log file.
+//
+// Since Close writes a file, you should always check that
+// it returns a non-nil error.
 func (r *Recorder) Close() error {
 	return r.proxy.Close()
 }
@@ -130,11 +120,12 @@ func NewReplayer(filename string) (*Replayer, error) {
 	return &Replayer{proxy: p}, nil
 }
 
-// Client returns an HTTP client for replaying. The client does not need to be
-// configured with credentials for authenticating to a server, since it never
-// contacts a real backend.
-func (r *Replayer) Client(ctx context.Context) (*http.Client, error) {
-	return proxyClient(ctx, r.proxy, option.WithoutAuthentication())
+// Client returns an HTTP client for replaying.
+//
+// The client does not need to be configured with credentials for authenticating to a
+// server, since it never contacts a real backend.
+func (r *Replayer) Client() *http.Client {
+	return &http.Client{Transport: r.proxy.Transport()}
 }
 
 // Initial returns the initial state saved by the Recorder.

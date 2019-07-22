@@ -62,7 +62,6 @@ type RecorderOptions struct {
 }
 
 // NewRecorder creates a recorder that writes to filename.
-//
 // You must call Close on the Recorder to ensure that all data is written.
 func NewRecorder(filename string, opts *RecorderOptions) (*Recorder, error) {
 	f, err := os.Create(filename)
@@ -79,7 +78,6 @@ func NewRecorder(filename string, opts *RecorderOptions) (*Recorder, error) {
 }
 
 // NewRecorderWriter creates a recorder that writes to w.
-//
 // You must call Close on the Recorder to ensure that all data is written.
 func NewRecorderWriter(w io.Writer, opts *RecorderOptions) (*Recorder, error) {
 	if opts == nil {

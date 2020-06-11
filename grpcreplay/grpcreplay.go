@@ -565,7 +565,7 @@ func FprintReader(w io.Writer, r io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if e == nil {
+		if e == nil { // EOF
 			return nil
 		}
 
@@ -699,6 +699,8 @@ func writeEntry(w io.Writer, e *entry) error {
 	return writeRecord(w, bytes)
 }
 
+// readEntry reads one entry from the replay file r.
+// At end of file, it returns (nil, nil).
 func readEntry(r io.Reader) (*entry, error) {
 	buf, err := readRecord(r)
 	if err == io.EOF {

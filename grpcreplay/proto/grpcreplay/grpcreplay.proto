@@ -68,4 +68,6 @@ message Entry {
   bool is_error = 4;                // was response an error?
   int32 ref_index = 5;              // for RESPONSE, index of matching request;
                                     // for SEND/RECV, index of CREATE_STREAM
+  // since the start of this recording, in golang duration unit
+  int64 delay = 6;
 }

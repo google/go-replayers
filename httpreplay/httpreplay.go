@@ -36,7 +36,7 @@ package httpreplay
 import (
 	"net/http"
 
-	"github.com/google/go-replayers/httpreplay/internal/proxy"
+	"github.com/getoutreach/go-replayers/httpreplay/internal/proxy"
 )
 
 // A Recorder records HTTP interactions.

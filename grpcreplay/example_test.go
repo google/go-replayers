@@ -15,7 +15,7 @@
 package grpcreplay_test
 
 import (
-	"github.com/google/go-replayers/grpcreplay"
+	"github.com/getoutreach/go-replayers/grpcreplay"
 	"google.golang.org/grpc"
 )
 

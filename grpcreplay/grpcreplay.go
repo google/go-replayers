@@ -25,11 +25,12 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
+	pb "github.com/getoutreach/go-replayers/grpcreplay/proto/grpcreplay"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
-	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -44,6 +45,7 @@ type Recorder struct {
 	f    *os.File
 	next int
 	err  error
+	st   time.Time
 }
 
 // RecorderOptions are options for a Recorder.
@@ -87,7 +89,7 @@ func NewRecorderWriter(w io.Writer, opts *RecorderOptions) (*Recorder, error) {
 	if err := writeHeader(bw, opts.Initial); err != nil {
 		return nil, err
 	}
-	return &Recorder{w: bw, opts: opts, next: 1}, nil
+	return &Recorder{w: bw, opts: opts, next: 1, st: time.Now()}, nil
 }
 
 // DialOptions returns the options that must be passed to grpc.Dial
@@ -590,6 +592,7 @@ type entry struct {
 	method   string
 	msg      message
 	refIndex int // index of corresponding request or create-stream
+	delay    time.Duration
 }
 
 func (e1 *entry) equal(e2 *entry) bool {

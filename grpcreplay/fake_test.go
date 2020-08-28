@@ -20,7 +20,7 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/google/go-replayers/grpcreplay/proto/intstore"
+	pb "github.com/getoutreach/go-replayers/grpcreplay/proto/intstore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

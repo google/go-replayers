@@ -22,11 +22,11 @@ import (
 	"strings"
 	"testing"
 
+	rpb "github.com/getoutreach/go-replayers/grpcreplay/proto/grpcreplay"
+	ipb "github.com/getoutreach/go-replayers/grpcreplay/proto/intstore"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	rpb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
-	ipb "github.com/google/go-replayers/grpcreplay/proto/intstore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -60,6 +60,9 @@ message Entry {
     //   else:        the received message
     // ref_index: index of matching CREATE_STREAM entry
     RECV = 5;   // message received from stream
+
+    // A call to CloseSend
+    CLOSE = 6;
   }
 
   Kind kind = 1;

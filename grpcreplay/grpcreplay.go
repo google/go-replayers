@@ -246,7 +246,96 @@ func (rcs *recClientStream) Trailer() metadata.MD {
 
 func (rcs *recClientStream) CloseSend() error {
 	// TODO(jba): record.
-	return rcs.cstream.CloseSend()
+	serr := rcs.cstream.CloseSend()
+	e := &entry{
+		kind:     pb.Entry_CLOSE,
+		refIndex: rcs.refIndex,
+	}
+	if _, err := rcs.rec.writeEntry(e); err != nil {
+		return err
+	}
+	return serr
+}
+
+type Resender struct {
+	initial []byte // initial state
+	streams []*stream
+	r       io.Reader
+	srp     SendRequestProcessor
+}
+
+type SendRequestProcessor interface {
+	NextCall(methodName string, msg proto.Message)
+	NextStream(methodName string, i int)
+	NextSend(message proto.Message, i int)
+	NextClose(i int)
+}
+
+func NewSender(filename string, srp SendRequestProcessor) (*Resender, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	return NewResenderReader(f, srp)
+}
+
+func NewResenderReader(r io.Reader, srp SendRequestProcessor) (*Resender, error) {
+	return &Resender{srp: srp, r: bufio.NewReader(r)}, nil
+}
+
+func (rep *Resender) Run() error {
+	r := rep.r
+	bytes, err := readHeader(r)
+	if err != nil {
+		return err
+	}
+	rep.initial = bytes
+
+	callsByIndex := map[int]*call{}
+	streamsByIndex := map[int]*stream{}
+	for i := 1; ; i++ {
+		e, err := readEntry(r)
+		if err != nil {
+			return err
+		}
+		if e == nil {
+			break
+		}
+		switch e.kind {
+		case pb.Entry_REQUEST:
+			rep.srp.NextCall(e.method, e.msg.msg)
+
+		case pb.Entry_RESPONSE:
+			continue
+
+		case pb.Entry_CREATE_STREAM:
+			rep.srp.NextStream(e.method, i)
+			s := &stream{method: e.method, createIndex: i}
+			s.createErr = e.msg.err
+			streamsByIndex[i] = s
+			rep.streams = append(rep.streams, s)
+
+		case pb.Entry_SEND:
+			s := streamsByIndex[e.refIndex]
+			if s == nil {
+				return fmt.Errorf("resender: no stream for send #%d", i)
+			}
+			rep.srp.NextSend(e.msg.msg, e.refIndex)
+
+		case pb.Entry_RECV:
+			continue
+
+		case pb.Entry_CLOSE:
+			rep.srp.NextClose(e.refIndex)
+
+		default:
+			return fmt.Errorf("resender: unknown kind %s", e.kind)
+		}
+	}
+	if len(callsByIndex) > 0 {
+		return fmt.Errorf("resender: %d unmatched requests", len(callsByIndex))
+	}
+	return nil
 }
 
 // A Replayer replays a set of RPCs saved by a Recorder.
@@ -364,7 +453,8 @@ func (rep *Replayer) read(r io.Reader) error {
 				return fmt.Errorf("replayer: no stream for recv #%d", i)
 			}
 			s.recvs = append(s.recvs, e.msg)
-
+		case pb.Entry_CLOSE:
+			// no op in the case of testing client
 		default:
 			return fmt.Errorf("replayer: unknown kind %s", e.kind)
 		}
@@ -729,7 +819,7 @@ func readEntry(r io.Reader) (*entry, error) {
 		}
 	} else if pe.IsError {
 		msg.err = io.EOF
-	} else if pe.Kind != pb.Entry_CREATE_STREAM {
+	} else if pe.Kind != pb.Entry_CREATE_STREAM && pe.Kind != pb.Entry_CLOSE {
 		return nil, errors.New("rpcreplay: entry with nil message and false is_error")
 	}
 	return &entry{

@@ -167,6 +167,7 @@ func (r *Recorder) writeEntry(e *entry) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
+	e.delay = int64(time.Now().Sub(r.st))
 	err := writeEntry(r.w, e)
 	if err != nil {
 		r.err = err
@@ -682,7 +683,7 @@ type entry struct {
 	method   string
 	msg      message
 	refIndex int // index of corresponding request or create-stream
-	delay    time.Duration
+	delay    int64
 }
 
 func (e1 *entry) equal(e2 *entry) bool {
@@ -784,6 +785,7 @@ func writeEntry(w io.Writer, e *entry) error {
 		Message:  a,
 		IsError:  e.msg.err != nil,
 		RefIndex: int32(e.refIndex),
+		Delay:    e.delay,
 	}
 	bytes, err := proto.Marshal(pe)
 	if err != nil {

@@ -275,6 +275,7 @@ type SendRequestProcessor interface {
 
 type ResenderOptions struct {
 	HonorTime bool
+	PreloadMs int
 }
 
 func NewSender(filename string, srp SendRequestProcessor, opts *ResenderOptions) (*Resender, error) {
@@ -310,7 +311,7 @@ func (rep *Resender) Run() error {
 		switch e.kind {
 		case pb.Entry_REQUEST:
 			if rep.opts.HonorTime {
-				time.Sleep(time.Duration(e.delay))
+				time.Sleep(time.Duration(e.delay) - time.Duration(rep.opts.PreloadMs)*time.Millisecond)
 			}
 			rep.srp.NextCall(e.method, e.msg.msg)
 

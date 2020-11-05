@@ -156,6 +156,17 @@ func (p *Proxy) Transport() *http.Transport {
 	}
 }
 
+// ScrubBody will replace all matching parts of the body with CLEARED.
+// regexps are parsed as regexp.Regexp.
+//
+// This only needs to be called during recording; the patterns will be saved to the
+// log for replay.
+func (p *Proxy) ScrubBody(regexps []string) {
+	for _, re := range regexps {
+		p.logger.log.Converter.registerScrubBody(re)
+	}
+}
+
 // RemoveRequestHeaders will remove request headers matching patterns from the log,
 // and skip matching them. Pattern is taken literally except for *, which matches any
 // sequence of characters.

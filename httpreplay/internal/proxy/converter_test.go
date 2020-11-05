@@ -33,11 +33,13 @@ func TestConvertRequest(t *testing.T) {
 		return h2
 	}
 
-	body := []byte("hello")
+	body := []byte("hello secret goodbye septet")
+	wantBody := []byte("hello CLEARED goodbye CLEARED")
 
 	conv := defaultConverter()
 	conv.registerClearParams("secret")
 	conv.registerRemoveParams("rm*")
+	conv.registerScrubBody("se[^ ]*et") // matches "secret" and "septet"
 	url, err := url.Parse("https://www.example.com?a=1&rmx=x&secret=2&c=3&rmy=4")
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +65,7 @@ func TestConvertRequest(t *testing.T) {
 		Method:    "GET",
 		URL:       "https://www.example.com?a=1&secret=CLEARED&c=3",
 		MediaType: "text/plain",
-		BodyParts: [][]byte{body},
+		BodyParts: [][]byte{wantBody},
 		Header: http.Header{
 			"X-Goog-Encryption-Key":             {"CLEARED"},
 			"X-Goog-Copy-Source-Encryption-Key": {"CLEARED"},

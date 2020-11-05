@@ -332,13 +332,14 @@ func TestRemoveAndClear(t *testing.T) {
 			true,
 		}, // different Remove is OK
 		{query, map[string]string{"Keep": "ok", "Clear": "diff"}, body, true}, // different Clear is OK
-		{"", headers, body, false},                                       // no query string
-		{"k=x&r=2&c=3", headers, body, false},                            // different k
-		{"r=2", headers, body, false},                                    // missing k and c
-		{"k=1&r=2", headers, body, false},                                // missing c
-		{"k=1&c=3", headers, body, true},                                 // missing r is OK
-		{"k=1&r=x&c=3", headers, body, true},                             // different r is OK,
-		{"k=1&r=2&c=x", headers, body, true},                             // different clear is OK
+		{"", headers, body, false},            // no query string
+		{"k=x&r=2&c=3", headers, body, false}, // different k
+		{"r=2", headers, body, false},         // missing k and c
+		{"k=1&r=2", headers, body, false},     // missing c
+		{"k=1&c=3", headers, body, true},      // missing r is OK
+		{"k=1&r=x&c=3", headers, body, true},  // different r is OK,
+		{"k=1&r=2&c=x", headers, body, true},  // different clear is OK
+		// Note: keep the length of the secret the same to avoid changing the Content-Length header.
 		{query, headers, "body body <secret>foobar</secret> body", true}, // different secret in body is OK
 		{query, headers, "foo", false},                                   // different body
 	} {

@@ -57,6 +57,19 @@ func NewRecorder(filename string, initial []byte) (*Recorder, error) {
 	return &Recorder{proxy: p}, nil
 }
 
+// ScrubBody will replace all parts of the request body that match any of the
+// provided regular expressions with CLEARED, on both recording and replay.
+// Use ScrubBody when the body information is secret or may change from run to
+// run.
+//
+// You may also need to RemoveRequestHeaders for the "Content-Length" header if
+// the body length changes from run to run.
+//
+// Regexps are parsed as regexp.Regexp.
+func (r *Recorder) ScrubBody(regexps ...string) {
+	r.proxy.ScrubBody(regexps)
+}
+
 // RemoveRequestHeaders will remove request headers matching patterns from the log,
 // and skip matching them during replay.
 //

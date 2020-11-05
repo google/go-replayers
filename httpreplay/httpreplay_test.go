@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,9 +285,11 @@ func TestRemoveAndClear(t *testing.T) {
 	rec.RemoveRequestHeaders("Rem*")
 	rec.ClearQueryParams("c")
 	rec.RemoveQueryParams("r")
+	rec.ScrubBody("<secret>.*</secret>")
 	hc := rec.Client()
 	query := "k=1&r=2&c=3"
-	req, err := http.NewRequest("GET", srv.URL+"?"+query, nil)
+	body := "body body <secret>secret</secret> body"
+	req, err := http.NewRequest("GET", srv.URL+"?"+query, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,32 +309,39 @@ func TestRemoveAndClear(t *testing.T) {
 	// - k or Keep must be present and identical
 	// - c or Clear must be present, but can be different
 	// - r or Remove can be anything
+	// For body, anything can be between the <secret> and </secret>.
 	for _, test := range []struct {
 		query       string
 		headers     map[string]string
+		body        string
 		wantSuccess bool
 	}{
-		{query, headers, true}, // same query string and headers
+		{query, headers, body, true}, // same query string, headers, and body
 		{query,
 			map[string]string{"Keep": "oops", "Clear": "secret", "Remove": "bye"},
+			body,
 			false, // different Keep
 		},
-		{query, map[string]string{}, false},                               // missing Keep and Clear
-		{query, map[string]string{"Keep": "ok"}, false},                   // missing Clear
-		{query, map[string]string{"Keep": "ok", "Clear": "secret"}, true}, // missing Remove is OK
+		{query, map[string]string{}, body, false},                               // missing Keep and Clear
+		{query, map[string]string{"Keep": "ok"}, body, false},                   // missing Clear
+		{query, map[string]string{"Keep": "ok", "Clear": "secret"}, body, true}, // missing Remove is OK
 		{
 			query,
 			map[string]string{"Keep": "ok", "Clear": "secret", "Remove": "whatev"},
+			body,
 			true,
 		}, // different Remove is OK
-		{query, map[string]string{"Keep": "ok", "Clear": "diff"}, true}, // different Clear is OK
-		{"", headers, false},            // no query string
-		{"k=x&r=2&c=3", headers, false}, // different k
-		{"r=2", headers, false},         // missing k and c
-		{"k=1&r=2", headers, false},     // missing c
-		{"k=1&c=3", headers, true},      // missing r is OK
-		{"k=1&r=x&c=3", headers, true},  // different r is OK,
-		{"k=1&r=2&c=x", headers, true},  // different clear is OK
+		{query, map[string]string{"Keep": "ok", "Clear": "diff"}, body, true}, // different Clear is OK
+		{"", headers, body, false},            // no query string
+		{"k=x&r=2&c=3", headers, body, false}, // different k
+		{"r=2", headers, body, false},         // missing k and c
+		{"k=1&r=2", headers, body, false},     // missing c
+		{"k=1&c=3", headers, body, true},      // missing r is OK
+		{"k=1&r=x&c=3", headers, body, true},  // different r is OK,
+		{"k=1&r=2&c=x", headers, body, true},  // different clear is OK
+		// Note: keep the length of the secret the same to avoid changing the Content-Length header.
+		{query, headers, "body body <secret>foobar</secret> body", true}, // different secret in body is OK
+		{query, headers, "foo", false},                                   // different body
 	} {
 		rep, err := httpreplay.NewReplayer(replayFilename)
 		if err != nil {
@@ -342,7 +352,7 @@ func TestRemoveAndClear(t *testing.T) {
 		if test.query != "" {
 			url += "?" + test.query
 		}
-		req, err = http.NewRequest("GET", url, nil)
+		req, err = http.NewRequest("GET", url, strings.NewReader(test.body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -355,8 +365,8 @@ func TestRemoveAndClear(t *testing.T) {
 		}
 		rep.Close()
 		if (resp.StatusCode == 200) != test.wantSuccess {
-			t.Errorf("%q, %v: got %d, wanted success=%t",
-				test.query, test.headers, resp.StatusCode, test.wantSuccess)
+			t.Errorf("%q, %v, %q: got %d, wanted success=%t",
+				test.query, test.headers, test.body, resp.StatusCode, test.wantSuccess)
 		}
 	}
 }

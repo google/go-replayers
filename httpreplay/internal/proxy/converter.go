@@ -29,6 +29,7 @@ import (
 // A Converter converts HTTP requests and responses to the Request and Response types
 // of this package, while removing or redacting information.
 type Converter struct {
+	ScrubBody []tRegexp // replace all matching parts of the body with "CLEARED"
 	// These all apply to both headers and trailers.
 	ClearHeaders          []tRegexp // replace matching headers with "CLEARED"
 	RemoveRequestHeaders  []tRegexp // remove matching headers in requests
@@ -50,6 +51,10 @@ func (r *tRegexp) UnmarshalText(b []byte) error {
 	var err error
 	r.Regexp, err = regexp.Compile(string(b))
 	return err
+}
+
+func (c *Converter) registerScrubBody(re string) {
+	c.ScrubBody = append(c.ScrubBody, tRegexp{regexp.MustCompile(re)})
 }
 
 func (c *Converter) registerRemoveRequestHeaders(pat string) {
@@ -131,6 +136,7 @@ func (c *Converter) convertRequest(req *http.Request) (*Request, error) {
 	if err != nil {
 		return nil, err
 	}
+	body = scrubBody(body, c.ScrubBody)
 	// If the body is empty, set it to nil to make sure the proxy sends a
 	// Content-Length header.
 	if len(body) == 0 {
@@ -211,6 +217,17 @@ func snapshotBody(body *io.ReadCloser) ([]byte, error) {
 	(*body).Close()
 	*body = ioutil.NopCloser(bytes.NewReader(data))
 	return data, nil
+}
+
+// Scrub parts of the body as needed.
+func scrubBody(body []byte, scrub []tRegexp) []byte {
+	if body == nil {
+		return nil
+	}
+	for _, re := range scrub {
+		body = re.ReplaceAll(body, []byte("CLEARED"))
+	}
+	return body
 }
 
 // Copy headers, clearing some and removing others.

@@ -39,6 +39,8 @@ var (
 	controlPort  = flag.Int("control-port", 8181, "port for controlling the proxy")
 	record       = flag.String("record", "", "record traffic and save to filename")
 	replay       = flag.String("replay", "", "read filename and replay traffic")
+	cert         = flag.String("cert", "", "The server certificate file path")
+	key          = flag.String("key", "", "The private key file path")
 	debugHeaders = flag.Bool("debug-headers", false, "log header mismatches")
 )
 
@@ -55,9 +57,9 @@ func main() {
 	var pr *proxy.Proxy
 	var err error
 	if *record != "" {
-		pr, err = proxy.ForRecording(*record, *port)
+		pr, err = proxy.ForRecording(*record, *port, *cert, *priv)
 	} else {
-		pr, err = proxy.ForReplaying(*replay, *port)
+		pr, err = proxy.ForReplaying(*replay, *port, *cert, *priv)
 	}
 	if err != nil {
 		log.Fatal(err)

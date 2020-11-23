@@ -35,6 +35,7 @@ package httpreplay
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/google/go-replayers/httpreplay/internal/proxy"
 )
@@ -46,10 +47,14 @@ type Recorder struct {
 
 // NewRecorder creates a recorder that writes to filename. The file will
 // also store initial state that can be retrieved to configure replay.
+// The Recorder MITM proxy shall be configured with a custom certificate by
+// providing paths to cert and key, in case where the custom certificate is not
+// provided, the proxy will be created with an auto-generated certificate.
+//
 //
 // You must call Close on the Recorder to ensure that all data is written.
-func NewRecorder(filename string, initial []byte) (*Recorder, error) {
-	p, err := proxy.ForRecording(filename, 0)
+func NewRecorder(filename string, initial []byte, cert, key string) (*Recorder, error) {
+	p, err := proxy.ForRecording(filename, 0, cert, key)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +116,11 @@ func (r *Recorder) Client() *http.Client {
 	return &http.Client{Transport: r.proxy.Transport()}
 }
 
+// ProxyURL will return the MITM proxy address
+func (r *Recorder) ProxyURL() *url.URL {
+	return r.proxy.URL
+}
+
 // Close closes the Recorder and saves the log file.
 //
 // Since Close writes a file, you should always check that
@@ -124,9 +134,12 @@ type Replayer struct {
 	proxy *proxy.Proxy
 }
 
-// NewReplayer creates a replayer that reads from filename.
-func NewReplayer(filename string) (*Replayer, error) {
-	p, err := proxy.ForReplaying(filename, 0)
+// NewReplayer creates a replayer that reads from filename. The Replayer MITM
+// proxy shall be configured with a custom certificate by providing paths to
+// cert and key, in case where the custom certificate is not provided, the
+// proxy will be created with an auto-generated certificate.
+func NewReplayer(filename, cert, key string) (*Replayer, error) {
+	p, err := proxy.ForReplaying(filename, 0, cert, key)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +152,11 @@ func NewReplayer(filename string) (*Replayer, error) {
 // server, since it never contacts a real backend.
 func (r *Replayer) Client() *http.Client {
 	return &http.Client{Transport: r.proxy.Transport()}
+}
+
+// ProxyURL will return the MITM proxy address
+func (r *Replayer) ProxyURL() *url.URL {
+	return r.proxy.URL
 }
 
 // Initial returns the initial state saved by the Recorder.

@@ -29,8 +29,8 @@ import (
 )
 
 // ForReplaying returns a Proxy configured to replay.
-func ForReplaying(filename string, port int) (*Proxy, error) {
-	p, err := newProxy(filename)
+func ForReplaying(filename string, port int, cert, key string) (*Proxy, error) {
+	p, err := newProxy(filename, cert, key)
 	if err != nil {
 		return nil, err
 	}

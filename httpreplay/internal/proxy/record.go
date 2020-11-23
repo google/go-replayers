@@ -57,8 +57,8 @@ type Proxy struct {
 }
 
 // ForRecording returns a Proxy configured to record.
-func ForRecording(filename string, port int) (*Proxy, error) {
-	p, err := newProxy(filename)
+func ForRecording(filename string, port int, cert, key string) (*Proxy, error) {
+	p, err := newProxy(filename, cert, key)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +106,18 @@ var (
 	configErr  error
 )
 
-func newProxy(filename string) (*Proxy, error) {
+func newProxy(filename, c, k string) (*Proxy, error) {
 	configOnce.Do(func() {
+		var x509c *x509.Certificate
+		var priv interface{}
+		var err error
 		// Set up a man-in-the-middle configuration with a CA certificate so the proxy can
 		// participate in TLS.
-		x509c, priv, err := mitm.NewAuthority("github.com/google/go-replayers/httpreplay", "HTTPReplay Authority", 100*time.Hour)
+		if c != "" && k != "" {
+			x509c, priv, err = customCert(c, k)
+		} else {
+			x509c, priv, err = autoGenCert()
+		}
 		if err != nil {
 			configErr = err
 			return
@@ -134,6 +141,24 @@ func newProxy(filename string) (*Proxy, error) {
 		filename:      filename,
 		ignoreHeaders: map[string]bool{},
 	}, nil
+}
+
+func customCert(cert, key string) (*x509.Certificate, interface{}, error) {
+	tlsc, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	priv := tlsc.PrivateKey
+
+	x509c, parseErr := x509.ParseCertificate(tlsc.Certificate[0])
+	if parseErr != nil {
+		return nil, nil, parseErr
+	}
+	return x509c, priv, nil
+}
+
+func autoGenCert() (*x509.Certificate, interface{}, error) {
+	return mitm.NewAuthority("github.com/google/go-replayers/httpreplay", "HTTPReplay Authority", 100*time.Hour)
 }
 
 func (p *Proxy) start(port int) error {

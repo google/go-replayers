@@ -20,6 +20,7 @@ package proxy
 // See github.com/google/martian/cmd/proxy/main.go for the origin of much of this.
 
 import (
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -109,7 +110,7 @@ var (
 func newProxy(filename, c, k string) (*Proxy, error) {
 	configOnce.Do(func() {
 		var x509c *x509.Certificate
-		var priv interface{}
+		var priv crypto.PrivateKey
 		var err error
 		// Set up a man-in-the-middle configuration with a CA certificate so the proxy can
 		// participate in TLS.
@@ -143,7 +144,7 @@ func newProxy(filename, c, k string) (*Proxy, error) {
 	}, nil
 }
 
-func customCert(cert, key string) (*x509.Certificate, interface{}, error) {
+func customCert(cert, key string) (*x509.Certificate, crypto.PrivateKey, error) {
 	tlsc, err := tls.LoadX509KeyPair(cert, key)
 	if err != nil {
 		return nil, nil, err
@@ -157,7 +158,7 @@ func customCert(cert, key string) (*x509.Certificate, interface{}, error) {
 	return x509c, priv, nil
 }
 
-func autoGenCert() (*x509.Certificate, interface{}, error) {
+func autoGenCert() (*x509.Certificate, crypto.PrivateKey, error) {
 	return mitm.NewAuthority("github.com/google/go-replayers/httpreplay", "HTTPReplay Authority", 100*time.Hour)
 }
 

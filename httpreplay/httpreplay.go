@@ -96,9 +96,9 @@ func RecorderPort(port int) recorderOption {
 }
 
 // NewRecorderWithOpts creates a recorder that writes to filename.
-// The Recorder MITM proxy shall be configured with a custom certficate by
-// providing paths to certs and key, in case where the custom certificate is
-// not provided, the proxy will be created with an auto-generated certificate
+// The default Recorder MITM proxy can be customised with one or more
+// recorderOption.
+//
 // You must call Close on the Recorder to ensure that all data is written.
 func NewRecorderWithOpts(filename string, opts ...recorderOption) (*Recorder, error) {
 	r := &Recorder{port: 0, initial: nil, cert: "", key: ""}
@@ -214,9 +214,8 @@ func ReplayerPort(port int) replayerOption {
 	}
 }
 
-// NewReplayerWithOpts creates a replayer that reads from filename.
-//
-// You must call Close on the Recorder to ensure that all data is written.
+// NewReplayerWithOpts creates a replayer that reads from filename. The default
+// Replayer MITM proxy can be customised with one or more replayerOption.
 func NewReplayerWithOpts(filename string, opts ...replayerOption) (*Replayer, error) {
 	r := &Replayer{port: 0, cert: "", key: ""}
 	for _, opt := range opts {
@@ -230,10 +229,7 @@ func NewReplayerWithOpts(filename string, opts ...replayerOption) (*Replayer, er
 	return r, nil
 }
 
-// NewReplayer creates a replayer that reads from filename. The Replayer MITM
-// proxy shall be configured with a custom certificate by providing paths to
-// cert and key, in case where the custom certificate is not provided, the
-// proxy will be created with an auto-generated certificate.
+// NewReplayer creates a replayer that reads from filename.
 func NewReplayer(filename string) (*Replayer, error) {
 	p, err := proxy.ForReplaying(filename, 0, "", "")
 	if err != nil {

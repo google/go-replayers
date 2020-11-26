@@ -57,9 +57,9 @@ func main() {
 	var pr *proxy.Proxy
 	var err error
 	if *record != "" {
-		pr, err = proxy.ForRecording(*record, *port, *cert, *priv)
+		pr, err = proxy.ForRecording(*record, *port, *cert, *key)
 	} else {
-		pr, err = proxy.ForReplaying(*replay, *port, *cert, *priv)
+		pr, err = proxy.ForReplaying(*replay, *port, *cert, *key)
 	}
 	if err != nil {
 		log.Fatal(err)

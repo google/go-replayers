@@ -35,26 +35,83 @@ package httpreplay
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/google/go-replayers/httpreplay/internal/proxy"
 )
 
 // A Recorder records HTTP interactions.
 type Recorder struct {
-	proxy *proxy.Proxy
+	proxy   *proxy.Proxy
+	port    int
+	initial []byte
+	cert    string
+	key     string
 }
+
+type recorderOption func(*Recorder)
 
 // NewRecorder creates a recorder that writes to filename. The file will
 // also store initial state that can be retrieved to configure replay.
 //
 // You must call Close on the Recorder to ensure that all data is written.
 func NewRecorder(filename string, initial []byte) (*Recorder, error) {
-	p, err := proxy.ForRecording(filename, 0)
+	p, err := proxy.ForRecording(filename, 0, "", "")
 	if err != nil {
 		return nil, err
 	}
 	p.Initial = initial
 	return &Recorder{proxy: p}, nil
+}
+
+// The custom CA cert filename to use for the MITM proxy to create certs on the
+// fly
+func RecorderCert(fileName string) recorderOption {
+	return func(r *Recorder) {
+		r.cert = fileName
+	}
+}
+
+// The key filename to the custom CA cert to use for the MITM proxy to create
+// certs on the fly
+func RecorderKey(fileName string) recorderOption {
+	return func(r *Recorder) {
+		r.key = fileName
+	}
+}
+
+// The recorder file will store initial data that can be retrieved during
+// replay
+func RecorderInitial(initial []byte) recorderOption {
+	return func(r *Recorder) {
+		r.initial = initial
+	}
+}
+
+// The port number for the MITM proxy
+func RecorderPort(port int) recorderOption {
+	return func(r *Recorder) {
+		r.port = port
+	}
+}
+
+// NewRecorderWithOpts creates a recorder that writes to filename.
+// The default Recorder MITM proxy can be customised with one or more
+// recorderOption.
+//
+// You must call Close on the Recorder to ensure that all data is written.
+func NewRecorderWithOpts(filename string, opts ...recorderOption) (*Recorder, error) {
+	r := &Recorder{port: 0, initial: nil, cert: "", key: ""}
+	for _, opt := range opts {
+		opt(r)
+	}
+	p, err := proxy.ForRecording(filename, r.port, r.cert, r.key)
+	if err != nil {
+		return nil, err
+	}
+	p.Initial = r.initial
+	r.proxy = p
+	return r, nil
 }
 
 // ScrubBody will replace all parts of the request body that match any of the
@@ -111,6 +168,11 @@ func (r *Recorder) Client() *http.Client {
 	return &http.Client{Transport: r.proxy.Transport()}
 }
 
+// ProxyURL will return the MITM proxy address
+func (r *Recorder) ProxyURL() *url.URL {
+	return r.proxy.URL
+}
+
 // Close closes the Recorder and saves the log file.
 //
 // Since Close writes a file, you should always check that
@@ -122,11 +184,54 @@ func (r *Recorder) Close() error {
 // A Replayer replays previously recorded HTTP interactions.
 type Replayer struct {
 	proxy *proxy.Proxy
+	port  int
+	cert  string
+	key   string
+}
+
+type replayerOption func(*Replayer)
+
+// The custom CA cert filename to use for the MITM proxy to create certs on the
+// fly
+func ReplayerCert(fileName string) replayerOption {
+	return func(r *Replayer) {
+		r.cert = fileName
+	}
+}
+
+// The key filename to the custom CA cert to use for the MITM proxy to create
+// certs on the fly
+func ReplayerKey(fileName string) replayerOption {
+	return func(r *Replayer) {
+		r.key = fileName
+	}
+}
+
+// The port number for the MITM proxy
+func ReplayerPort(port int) replayerOption {
+	return func(r *Replayer) {
+		r.port = port
+	}
+}
+
+// NewReplayerWithOpts creates a replayer that reads from filename. The default
+// Replayer MITM proxy can be customised with one or more replayerOption.
+func NewReplayerWithOpts(filename string, opts ...replayerOption) (*Replayer, error) {
+	r := &Replayer{port: 0, cert: "", key: ""}
+	for _, opt := range opts {
+		opt(r)
+	}
+	p, err := proxy.ForReplaying(filename, r.port, r.cert, r.key)
+	if err != nil {
+		return nil, err
+	}
+	r.proxy = p
+	return r, nil
 }
 
 // NewReplayer creates a replayer that reads from filename.
 func NewReplayer(filename string) (*Replayer, error) {
-	p, err := proxy.ForReplaying(filename, 0)
+	p, err := proxy.ForReplaying(filename, 0, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +244,11 @@ func NewReplayer(filename string) (*Replayer, error) {
 // server, since it never contacts a real backend.
 func (r *Replayer) Client() *http.Client {
 	return &http.Client{Transport: r.proxy.Transport()}
+}
+
+// ProxyURL will return the MITM proxy address
+func (r *Replayer) ProxyURL() *url.URL {
+	return r.proxy.URL
 }
 
 // Initial returns the initial state saved by the Recorder.

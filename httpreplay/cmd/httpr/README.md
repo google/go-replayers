@@ -37,7 +37,7 @@ releases page](https://github.com/googleapis/google-cloud-go/releases).
    `http://localhost:8181/authority.cer`. (If you changed the control port, use
    it in place of 8181.)  Consult your language to determine
    how to install the certificate. Note that the certificate is different for each run
-   of `httpr`.
+   of `httpr`. A custom certficate can also be provided with `-cert` and `-key`.
 1. Arrange for your test program to use `httpr` as a proxy. This may be as
    simple as setting the `HTTPS_PROXY` environment variable.
 1. Run your test program, using whatever authentication for your Google API
@@ -51,7 +51,8 @@ releases page](https://github.com/googleapis/google-cloud-go/releases).
    ```
    httpr -replay myclient.replay
    ```
-1. Install the CA certificate as described above.
+1. Install the CA certificate as described above or provide a custom `-cert`
+   and `-key`.
 1. Have your test program treat `httpr` as a proxy, as described above.
 1. Run your test program. Your Google API clients should use no authentication.
 

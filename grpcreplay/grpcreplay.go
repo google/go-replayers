@@ -26,14 +26,14 @@ import (
 	"os"
 	"sync"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
-	"github.com/golang/protobuf/ptypes/any"
 	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
+	anypb "google.golang.org/protobuf/types/known/anypb"
 )
 
 // A Recorder records RPCs for later playback.
@@ -573,7 +573,11 @@ func FprintReader(w io.Writer, r io.Reader) error {
 		switch {
 		case e.msg.msg != nil:
 			fmt.Fprintf(w, ", message:\n")
-			if err := proto.MarshalText(w, e.msg.msg); err != nil {
+			buf, err := prototext.Marshal(e.msg.msg)
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(buf); err != nil {
 				return err
 			}
 		case e.msg.err != nil:
@@ -677,10 +681,10 @@ func writeEntry(w io.Writer, e *entry) error {
 	} else {
 		m = e.msg.msg
 	}
-	var a *any.Any
+	var a *anypb.Any
 	var err error
 	if m != nil {
-		a, err = ptypes.MarshalAny(m)
+		a, err = anypb.New(m)
 		if err != nil {
 			return err
 		}
@@ -715,14 +719,14 @@ func readEntry(r io.Reader) (*entry, error) {
 	}
 	var msg message
 	if pe.Message != nil {
-		var any ptypes.DynamicAny
-		if err := ptypes.UnmarshalAny(pe.Message, &any); err != nil {
+		any, err := pe.Message.UnmarshalNew()
+		if err != nil {
 			return nil, err
 		}
 		if pe.IsError {
-			msg.err = status.ErrorProto(any.Message.(*spb.Status))
+			msg.err = status.ErrorProto(any.ProtoReflect().Interface().(*spb.Status))
 		} else {
-			msg.msg = any.Message
+			msg.msg = any.ProtoReflect().Interface()
 		}
 	} else if pe.IsError {
 		msg.err = io.EOF

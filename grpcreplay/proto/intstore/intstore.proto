@@ -17,6 +17,8 @@
 
 syntax = "proto3";
 
+option go_package="github.com/google/go-replayers/grpcreplay/proto/intstore";
+
 package intstore;
 
 service IntStore {

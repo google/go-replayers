@@ -26,7 +26,7 @@ DialOptions to grpc.Dial:
     rec, err := rpcreplay.NewRecorder("service.replay", nil)
     if err != nil { ... }
     defer func() {
-        if err := rec.Close(); err != nil { ... }
+    	if err := rec.Close(); err != nil { ... }
     }()
     conn, err := grpc.Dial(serverAddress, rec.DialOptions()...)
 
@@ -42,7 +42,7 @@ To replay a captured file, create a Replayer and ask it for a (fake) connection.
 don't actually have to dial a server. (Since we're reading the file and not writing
 it, we don't have to be as careful about the error returned from Close).
 
-    rep, err := rpcreplay.NewReplayer("service.replay")
+    rep, err := grpcreplay.NewReplayer("service.replay", nil)
     if err != nil { ... }
     defer rep.Close()
     conn, err := rep.Connection()
@@ -58,18 +58,21 @@ this initial state and re-establish it on replay.
 To record the initial state, serialize it into a []byte and pass it as the second
 argument to NewRecorder:
 
-   timeNow := time.Now()
-   b, err := timeNow.MarshalBinary()
-   if err != nil { ... }
-   rec, err := rpcreplay.NewRecorder("service.replay", b)
+    timeNow := time.Now()
+    b, err := timeNow.MarshalBinary()
+    if err != nil { ... }
+    recordOpts := &grpcreplay.RecorderOptions{
+    	Initial: b,
+    }
+    rec, err := grpcreplay.NewRecorder("service.replay", recordOpts)
 
 On replay, get the bytes from Replayer.Initial:
 
-   rep, err := rpcreplay.NewReplayer("service.replay")
-   if err != nil { ... }
-   defer rep.Close()
-   err = timeNow.UnmarshalBinary(rep.Initial())
-   if err != nil { ... }
+    rep, err := grpcreplay.NewReplayer("service.replay", nil)
+    if err != nil { ... }
+    defer rep.Close()
+    err = timeNow.UnmarshalBinary(rep.Initial())
+    if err != nil { ... }
 
 
 Callbacks
@@ -88,27 +91,27 @@ replaying, or RPC matching on replay will fail.
 
 A common way to analyze and modify the various messages is to use a type switch.
 
-	// Assume these types implement proto.Message.
-	type Greeting struct {
-		line string
-	}
+    // Assume these types implement proto.Message.
+    type Greeting struct {
+    	line string
+    }
 
-	type Farewell struct {
-		line string
-	}
+    type Farewell struct {
+    	line string
+    }
 
-	func sayings(method string, msg proto.Message) error {
-		switch m := msg.(type) {
-		case Greeting:
-			msg.line = "Hi!"
-			return nil
-		case Farewell:
-			msg.line = "Bye bye!"
-			return nil
-		default:
-			return fmt.Errorf("unknown message type")
-		}
-	}
+    func sayings(method string, msg proto.Message) error {
+    	switch m := msg.(type) {
+    	case Greeting:
+    		msg.line = "Hi!"
+    		return nil
+    	case Farewell:
+    		msg.line = "Bye bye!"
+    		return nil
+    	default:
+    		return fmt.Errorf("unknown message type")
+    	}
+    }
 
 Nondeterminism
 

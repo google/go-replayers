@@ -31,7 +31,7 @@ import (
 	"os/signal"
 
 	"github.com/google/go-replayers/httpreplay/internal/proxy"
-	"github.com/google/martian/martianhttp"
+	"github.com/google/martian/v3/martianhttp"
 )
 
 var (

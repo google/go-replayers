@@ -269,6 +269,8 @@ func TestRemoveAndClear(t *testing.T) {
 	// Disable logging for this test, since it generates a lot.
 	log.SetOutput(ioutil.Discard)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Keep", "ok")
+		w.Header().Set("Remove", "bye")
 		fmt.Fprintln(w, "LGTM")
 	}))
 	defer srv.Close()
@@ -283,6 +285,7 @@ func TestRemoveAndClear(t *testing.T) {
 	}
 	rec.ClearHeaders("Clear")
 	rec.RemoveRequestHeaders("Rem*")
+	rec.RemoveResponseHeaders("Rem*")
 	rec.ClearQueryParams("c")
 	rec.RemoveQueryParams("r")
 	rec.ScrubBody("<secret>.*</secret>")
@@ -367,6 +370,12 @@ func TestRemoveAndClear(t *testing.T) {
 		if (resp.StatusCode == 200) != test.wantSuccess {
 			t.Errorf("%q, %v, %q: got %d, wanted success=%t",
 				test.query, test.headers, test.body, resp.StatusCode, test.wantSuccess)
+		}
+		if _, ok := resp.Header["Remove"]; ok {
+			t.Error("Remove header not removed")
+		}
+		if _, ok := resp.Header["Keep"]; test.wantSuccess && !ok {
+			t.Error("Keep header not kept")
 		}
 	}
 }

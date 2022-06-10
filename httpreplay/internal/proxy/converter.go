@@ -61,6 +61,10 @@ func (c *Converter) registerRemoveRequestHeaders(pat string) {
 	c.RemoveRequestHeaders = append(c.RemoveRequestHeaders, pattern(pat))
 }
 
+func (c *Converter) registerRemoveResponseHeaders(pat string) {
+	c.RemoveResponseHeaders = append(c.RemoveResponseHeaders, pattern(pat))
+}
+
 func (c *Converter) registerClearHeaders(pat string) {
 	c.ClearHeaders = append(c.ClearHeaders, pattern(pat))
 }

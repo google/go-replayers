@@ -135,6 +135,14 @@ func (r *Recorder) RemoveRequestHeaders(patterns ...string) {
 	r.proxy.RemoveRequestHeaders(patterns)
 }
 
+// RemoveResponseHeaders will remove response headers matching patterns from the log,
+// and skip matching them during replay.
+//
+// Pattern is taken literally except for *, which matches any sequence of characters.
+func (r *Recorder) RemoveResponseHeaders(patterns ...string) {
+	r.proxy.RemoveResponseHeaders(patterns)
+}
+
 // ClearHeaders will replace the value of request and response headers that match
 // any of the patterns with CLEARED, on both recording and replay.
 // Use ClearHeaders when the header information is secret or may change from run to

@@ -205,6 +205,18 @@ func (p *Proxy) RemoveRequestHeaders(patterns []string) {
 	}
 }
 
+// RemoveResponseHeaders will remove response headers matching patterns from the log,
+// and skip matching them. Pattern is taken literally except for *, which matches any
+// sequence of characters.
+//
+// This only needs to be called during recording; the patterns will be saved to the
+// log for replay.
+func (p *Proxy) RemoveResponseHeaders(patterns []string) {
+	for _, pat := range patterns {
+		p.logger.log.Converter.registerRemoveResponseHeaders(pat)
+	}
+}
+
 // ClearHeaders will replace matching headers with CLEARED.
 //
 // This only needs to be called during recording; the patterns will be saved to the

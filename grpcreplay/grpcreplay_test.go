@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -618,4 +619,20 @@ func TestOutOfOrderStreamReplay(t *testing.T) {
 	// Replay in a different order.
 	buf = record(t, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
 	replay(t, buf, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 2, 1) })
+}
+
+func TestFprintReader(t *testing.T) {
+	buf := record(t, testService)
+	got := &bytes.Buffer{}
+	err := FprintReader(got, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/fprint.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Errorf("got:\n%v\nwant:\n%v\n", got.String(), string(want))
+	}
 }

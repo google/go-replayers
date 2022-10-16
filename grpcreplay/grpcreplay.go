@@ -573,10 +573,7 @@ func FprintReader(w io.Writer, r io.Reader) error {
 		switch {
 		case e.msg.msg != nil:
 			fmt.Fprintf(w, ", message:\n")
-			buf, err := prototext.Marshal(e.msg.msg)
-			if err != nil {
-				return err
-			}
+			buf := []byte(prototext.Format(e.msg.msg))
 			if _, err := w.Write(buf); err != nil {
 				return err
 			}

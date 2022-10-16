@@ -716,14 +716,14 @@ func readEntry(r io.Reader) (*entry, error) {
 	}
 	var msg message
 	if pe.Message != nil {
-		any, err := pe.Message.UnmarshalNew()
+		a, err := pe.Message.UnmarshalNew()
 		if err != nil {
 			return nil, err
 		}
 		if pe.IsError {
-			msg.err = status.ErrorProto(any.ProtoReflect().Interface().(*spb.Status))
+			msg.err = status.ErrorProto(a.ProtoReflect().Interface().(*spb.Status))
 		} else {
-			msg.msg = any.ProtoReflect().Interface()
+			msg.msg = a.ProtoReflect().Interface()
 		}
 	} else if pe.IsError {
 		msg.err = io.EOF

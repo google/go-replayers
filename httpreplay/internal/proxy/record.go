@@ -163,7 +163,7 @@ func autoGenCert() (*x509.Certificate, crypto.PrivateKey, error) {
 }
 
 func (p *Proxy) start(port int) error {
-	l, err := net.Listen("tcp4", fmt.Sprintf("localhost:%d", port))
+	l, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		return err
 	}

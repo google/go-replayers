@@ -56,10 +56,27 @@ releases page](https://github.com/googleapis/google-cloud-go/releases).
 1. Have your test program treat `httpr` as a proxy, as described above.
 1. Run your test program. Your Google API clients should use no authentication.
 
+### Body Scrubbing
+
+To scrub the body (great for replacing sensitive data with placeholders), 
+use the `-scrub-body` flag. This flag takes a regex pattern and will replace any match with `CLEARED`. 
+The flag is only required when recording. When replaying the rules are pulled from the replay file.
+
+Example: `httpr -record myclient.replay -scrub-body '(client_secret=\w+)|(client_id=\w+)'`
+
+### Headers
+
+To remove headers use the `-remove-request-headers` flag. This flag takes a comma separated list of headers to remove.
+The flag is only required when recording. When replaying the rules are pulled from the replay file.
+
+Example: `httpr -record myclient.replay -remove-request-headers 'X-Datadog-*,Traceparent,Tracestate'`
+
 ## Tips
 
 You must remove all randomness from your interaction while recording,
-so that the replay is fully deterministic.
+so that the replay is fully deterministic. Looking at the replay file can help
+you determine what randomness you need to remove. For example, you may find
+some trace headers that need removed. Content-Length is also good to check.
 
 Note that BigQuery clients choose random values for job IDs and insert ID if you
 do not supply them. Either supply your own, or seed the client's random number

@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/google/go-replayers/httpreplay/internal/proxy"
@@ -36,13 +37,15 @@ import (
 )
 
 var (
-	port         = flag.Int("port", 8080, "port of the proxy")
-	controlPort  = flag.Int("control-port", 8181, "port for controlling the proxy")
-	record       = flag.String("record", "", "record traffic and save to filename")
-	replay       = flag.String("replay", "", "read filename and replay traffic")
-	cert         = flag.String("cert", "", "The server certificate file path")
-	key          = flag.String("key", "", "The private key file path")
-	debugHeaders = flag.Bool("debug-headers", false, "log header mismatches")
+	port                 = flag.Int("port", 8080, "port of the proxy")
+	controlPort          = flag.Int("control-port", 8181, "port for controlling the proxy")
+	record               = flag.String("record", "", "record traffic and save to filename")
+	replay               = flag.String("replay", "", "read filename and replay traffic")
+	cert                 = flag.String("cert", "", "The server certificate file path")
+	key                  = flag.String("key", "", "The private key file path")
+	debugHeaders         = flag.Bool("debug-headers", false, "log header mismatches")
+	scrubBody            = flag.String("scrub-body", "", "regex to scrub from body")
+	removeRequestHeaders = flag.String("remove-request-headers", "", "comma-separated list of headers to remove from requests, use * as a wildcard")
 )
 
 func main() {
@@ -59,6 +62,12 @@ func main() {
 	var err error
 	if *record != "" {
 		pr, err = proxy.ForRecording(*record, *port, *cert, *key)
+		if *scrubBody != "" {
+			pr.ScrubBody([]string{*scrubBody})
+		}
+		if *removeRequestHeaders != "" {
+			pr.RemoveRequestHeaders(strings.Split(*removeRequestHeaders, ","))
+		}
 	} else {
 		pr, err = proxy.ForReplaying(*replay, *port, *cert, *key)
 	}

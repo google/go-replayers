@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,225 +34,263 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 )
 
-func TestRecordIO(t *testing.T) {
-	buf := &bytes.Buffer{}
-	want := []byte{1, 2, 3}
-	if err := writeRecord(buf, want); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readRecord(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+var formats = []struct {
+	name      string
+	newWriter func(w io.Writer) writer
+	newReader func(r io.Reader) reader
+}{
+	{
+		"binary",
+		func(w io.Writer) writer { return &binaryWriter{w} },
+		func(r io.Reader) reader { return &binaryReader{r} },
+	},
+	{
+		"text",
+		func(w io.Writer) writer { return &textWriter{w} },
+		func(r io.Reader) reader { return newTextReader(r) },
+	},
+}
+
+func TestNewReader(t *testing.T) {
+	for _, test := range []struct {
+		data string
+		want reflect.Type
+	}{
+		{binaryMagic, reflect.TypeOf(&binaryReader{})},
+		{textMagic, reflect.TypeOf(&textReader{})},
+	} {
+		r := strings.NewReader(test.data)
+		rr, err := newReader(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := reflect.TypeOf(rr); got != test.want {
+			t.Errorf("%q: got %s, want %s", test.data, got, test.want)
+		}
 	}
 }
 
 func TestHeaderIO(t *testing.T) {
-	buf := &bytes.Buffer{}
-	want := []byte{1, 2, 3}
-	if err := writeHeader(buf, want); err != nil {
-		t.Fatal(err)
-	}
-	got, err := readHeader(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cmp.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-
-	// readHeader errors
-	for _, contents := range []string{"", "badmagic", "gRPCReplay"} {
-		if _, err := readHeader(bytes.NewBufferString(contents)); err == nil {
-			t.Errorf("%q: got nil, want error", contents)
-		}
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			want := []byte{1, 2, 3}
+			w := format.newWriter(buf)
+			r := format.newReader(buf)
+			if err := w.writeHeader(want); err != nil {
+				t.Fatal(err)
+			}
+			got, err := r.readHeader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cmp.Equal(got, want) {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
 	}
 }
 
 func TestEntryIO(t *testing.T) {
-	for i, want := range []*entry{
-		{
-			kind:     rpb.Entry_REQUEST,
-			method:   "method",
-			msg:      message{msg: &rpb.Entry{}},
-			refIndex: 7,
-		},
-		{
-			kind:     rpb.Entry_RESPONSE,
-			method:   "method",
-			msg:      message{err: status.Error(codes.NotFound, "not found")},
-			refIndex: 8,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			method:   "method",
-			msg:      message{err: io.EOF},
-			refIndex: 3,
-		},
-	} {
-		buf := &bytes.Buffer{}
-		if err := writeEntry(buf, want); err != nil {
-			t.Fatal(err)
-		}
-		got, err := readEntry(buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !got.equal(want) {
-			t.Errorf("#%d: got %v, want %v", i, got, want)
-		}
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			for i, want := range []*entry{
+				{
+					kind:     rpb.Entry_REQUEST,
+					method:   "method",
+					msg:      message{msg: &rpb.Entry{}},
+					refIndex: 7,
+				},
+				{
+					kind:     rpb.Entry_RESPONSE,
+					method:   "method",
+					msg:      message{err: status.Error(codes.NotFound, "not found")},
+					refIndex: 8,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					method:   "method",
+					msg:      message{err: io.EOF},
+					refIndex: 3,
+				},
+			} {
+				buf := &bytes.Buffer{}
+				w := format.newWriter(buf)
+				r := format.newReader(buf)
+				if err := w.writeEntry(want); err != nil {
+					t.Fatal(err)
+				}
+				got, err := r.readEntry()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !got.equal(want) {
+					t.Errorf("#%d: got %v, want %v", i, got, want)
+				}
+			}
+		})
 	}
 }
 
 var initialState = []byte{1, 2, 3}
 
 func TestRecord(t *testing.T) {
-	buf := record(t, testService)
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			buf := record(t, format.name, testService)
+			r, err := newReader(buf)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	gotIstate, err := readHeader(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cmp.Equal(gotIstate, initialState) {
-		t.Fatalf("got %v, want %v", gotIstate, initialState)
-	}
-	item := &ipb.Item{Name: "a", Value: 1}
-	wantEntries := []*entry{
-		// Set
-		{
-			kind:   rpb.Entry_REQUEST,
-			method: "/intstore.IntStore/Set",
-			msg:    message{msg: item},
-		},
-		{
-			kind:     rpb.Entry_RESPONSE,
-			msg:      message{msg: &ipb.SetResponse{PrevValue: 0}},
-			refIndex: 1,
-		},
-		// Get
-		{
-			kind:   rpb.Entry_REQUEST,
-			method: "/intstore.IntStore/Get",
-			msg:    message{msg: &ipb.GetRequest{Name: "a"}},
-		},
-		{
-			kind:     rpb.Entry_RESPONSE,
-			msg:      message{msg: item},
-			refIndex: 3,
-		},
-		{
-			kind:   rpb.Entry_REQUEST,
-			method: "/intstore.IntStore/Get",
-			msg:    message{msg: &ipb.GetRequest{Name: "x"}},
-		},
-		{
-			kind:     rpb.Entry_RESPONSE,
-			msg:      message{err: status.Error(codes.NotFound, `"x"`)},
-			refIndex: 5,
-		},
-		// ListItems
-		{ // entry #7
-			kind:   rpb.Entry_CREATE_STREAM,
-			method: "/intstore.IntStore/ListItems",
-		},
-		{
-			kind:     rpb.Entry_SEND,
-			msg:      message{msg: &ipb.ListItemsRequest{}},
-			refIndex: 7,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{msg: item},
-			refIndex: 7,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{err: io.EOF},
-			refIndex: 7,
-		},
-		// SetStream
-		{ // entry #11
-			kind:   rpb.Entry_CREATE_STREAM,
-			method: "/intstore.IntStore/SetStream",
-		},
-		{
-			kind:     rpb.Entry_SEND,
-			msg:      message{msg: &ipb.Item{Name: "b", Value: 2}},
-			refIndex: 11,
-		},
-		{
-			kind:     rpb.Entry_SEND,
-			msg:      message{msg: &ipb.Item{Name: "c", Value: 3}},
-			refIndex: 11,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{msg: &ipb.Summary{Count: 2}},
-			refIndex: 11,
-		},
+			gotIstate, err := r.readHeader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cmp.Equal(gotIstate, initialState) {
+				t.Fatalf("got %v, want %v", gotIstate, initialState)
+			}
+			item := &ipb.Item{Name: "a", Value: 1}
+			wantEntries := []*entry{
+				// Set
+				{
+					kind:   rpb.Entry_REQUEST,
+					method: "/intstore.IntStore/Set",
+					msg:    message{msg: item},
+				},
+				{
+					kind:     rpb.Entry_RESPONSE,
+					msg:      message{msg: &ipb.SetResponse{PrevValue: 0}},
+					refIndex: 1,
+				},
+				// Get
+				{
+					kind:   rpb.Entry_REQUEST,
+					method: "/intstore.IntStore/Get",
+					msg:    message{msg: &ipb.GetRequest{Name: "a"}},
+				},
+				{
+					kind:     rpb.Entry_RESPONSE,
+					msg:      message{msg: item},
+					refIndex: 3,
+				},
+				{
+					kind:   rpb.Entry_REQUEST,
+					method: "/intstore.IntStore/Get",
+					msg:    message{msg: &ipb.GetRequest{Name: "x"}},
+				},
+				{
+					kind:     rpb.Entry_RESPONSE,
+					msg:      message{err: status.Error(codes.NotFound, `"x"`)},
+					refIndex: 5,
+				},
+				// ListItems
+				{ // entry #7
+					kind:   rpb.Entry_CREATE_STREAM,
+					method: "/intstore.IntStore/ListItems",
+				},
+				{
+					kind:     rpb.Entry_SEND,
+					msg:      message{msg: &ipb.ListItemsRequest{}},
+					refIndex: 7,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{msg: item},
+					refIndex: 7,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{err: io.EOF},
+					refIndex: 7,
+				},
+				// SetStream
+				{ // entry #11
+					kind:   rpb.Entry_CREATE_STREAM,
+					method: "/intstore.IntStore/SetStream",
+				},
+				{
+					kind:     rpb.Entry_SEND,
+					msg:      message{msg: &ipb.Item{Name: "b", Value: 2}},
+					refIndex: 11,
+				},
+				{
+					kind:     rpb.Entry_SEND,
+					msg:      message{msg: &ipb.Item{Name: "c", Value: 3}},
+					refIndex: 11,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{msg: &ipb.Summary{Count: 2}},
+					refIndex: 11,
+				},
 
-		// StreamChat
-		{ // entry #15
-			kind:   rpb.Entry_CREATE_STREAM,
-			method: "/intstore.IntStore/StreamChat",
-		},
-		{
-			kind:     rpb.Entry_SEND,
-			msg:      message{msg: &ipb.Item{Name: "d", Value: 4}},
-			refIndex: 15,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{msg: &ipb.Item{Name: "d", Value: 4}},
-			refIndex: 15,
-		},
-		{
-			kind:     rpb.Entry_SEND,
-			msg:      message{msg: &ipb.Item{Name: "e", Value: 5}},
-			refIndex: 15,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{msg: &ipb.Item{Name: "e", Value: 5}},
-			refIndex: 15,
-		},
-		{
-			kind:     rpb.Entry_RECV,
-			msg:      message{err: io.EOF},
-			refIndex: 15,
-		},
-	}
-	for i, w := range wantEntries {
-		g, err := readEntry(buf)
-		if err != nil {
-			t.Fatalf("#%d: %v", i+1, err)
-		}
-		if !g.equal(w) {
-			t.Errorf("#%d:\ngot  %+v\nwant %+v", i+1, g, w)
-		}
-	}
-	g, err := readEntry(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g != nil {
-		t.Errorf("\ngot  %+v\nwant nil", g)
+				// StreamChat
+				{ // entry #15
+					kind:   rpb.Entry_CREATE_STREAM,
+					method: "/intstore.IntStore/StreamChat",
+				},
+				{
+					kind:     rpb.Entry_SEND,
+					msg:      message{msg: &ipb.Item{Name: "d", Value: 4}},
+					refIndex: 15,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{msg: &ipb.Item{Name: "d", Value: 4}},
+					refIndex: 15,
+				},
+				{
+					kind:     rpb.Entry_SEND,
+					msg:      message{msg: &ipb.Item{Name: "e", Value: 5}},
+					refIndex: 15,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{msg: &ipb.Item{Name: "e", Value: 5}},
+					refIndex: 15,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					msg:      message{err: io.EOF},
+					refIndex: 15,
+				},
+			}
+			for i, w := range wantEntries {
+				g, err := r.readEntry()
+				if err != nil {
+					t.Fatalf("#%d: %v", i+1, err)
+				}
+				if !g.equal(w) {
+					t.Errorf("#%d:\ngot  %+v\nwant %+v", i+1, g, w)
+				}
+			}
+			g, err := r.readEntry()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g != nil {
+				t.Errorf("\ngot  %+v\nwant nil", g)
+			}
+		})
 	}
 }
 
 func TestReplay(t *testing.T) {
-	buf := record(t, testService)
-	replay(t, buf, testService)
+	for _, format := range formats {
+		buf := record(t, format.name, testService)
+		replay(t, buf, testService)
+	}
 }
 
-func record(t *testing.T, run func(*testing.T, *grpc.ClientConn)) *bytes.Buffer {
+func record(t *testing.T, format string, run func(*testing.T, *grpc.ClientConn)) *bytes.Buffer {
 	srv := newIntStoreServer()
 	defer srv.stop()
 
 	buf := &bytes.Buffer{}
-	rec, err := NewRecorderWriter(buf, &RecorderOptions{Initial: initialState})
+	opts := &RecorderOptions{Initial: initialState}
+	opts.Text = (format == "text")
+	rec, err := NewRecorderWriter(buf, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,66 +482,76 @@ func TestRecorderBeforeFunc(t *testing.T) {
 		},
 	}
 
-	for _, tc := range tests {
-		// Wrap test cases in a func so defers execute correctly.
-		func() {
-			srv := newIntStoreServer()
-			defer srv.stop()
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			for _, tc := range tests {
+				// Wrap test cases in a func so defers execute correctly.
+				func() {
+					srv := newIntStoreServer()
+					defer srv.stop()
 
-			var b bytes.Buffer
-			r, err := NewRecorderWriter(&b, &RecorderOptions{BeforeWrite: tc.f})
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			ctx := context.Background()
-			conn, err := grpc.DialContext(ctx, srv.Addr, append([]grpc.DialOption{grpc.WithInsecure()}, r.DialOptions()...)...)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer conn.Close()
+					opts := &RecorderOptions{BeforeWrite: tc.f}
+					opts.Text = (format.name == "text")
+					var b bytes.Buffer
+					r, err := NewRecorderWriter(&b, opts)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					ctx := context.Background()
+					conn, err := grpc.DialContext(ctx, srv.Addr, append([]grpc.DialOption{grpc.WithInsecure()}, r.DialOptions()...)...)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer conn.Close()
 
-			client := ipb.NewIntStoreClient(conn)
-			_, err = client.Set(ctx, tc.msg)
-			switch {
-			case err != nil && !tc.wantErr:
-				t.Error(err)
-				return
-			case err == nil && tc.wantErr:
-				t.Errorf("got nil; want error")
-				return
-			case err != nil:
-				// Error found as expected, don't check Get().
-				return
-			}
+					client := ipb.NewIntStoreClient(conn)
+					_, err = client.Set(ctx, tc.msg)
+					switch {
+					case err != nil && !tc.wantErr:
+						t.Error(err)
+						return
+					case err == nil && tc.wantErr:
+						t.Errorf("got nil; want error")
+						return
+					case err != nil:
+						// Error found as expected, don't check Get().
+						return
+					}
 
-			if tc.wantRespMsg != nil {
-				got, err := client.Get(ctx, &ipb.GetRequest{Name: tc.msg.GetName()})
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				if !cmp.Equal(got, tc.wantRespMsg, protocmp.Transform()) {
-					t.Errorf("got %+v; want %+v", got, tc.wantRespMsg)
-				}
-			}
+					if tc.wantRespMsg != nil {
+						got, err := client.Get(ctx, &ipb.GetRequest{Name: tc.msg.GetName()})
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						if !cmp.Equal(got, tc.wantRespMsg, protocmp.Transform()) {
+							t.Errorf("got %+v; want %+v", got, tc.wantRespMsg)
+						}
+					}
 
-			r.Close()
+					r.Close()
 
-			if tc.wantEntryMsg != nil {
-				_, _ = readHeader(&b)
-				e, err := readEntry(&b)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				got := e.msg.msg.(*ipb.Item)
-				if !cmp.Equal(got, tc.wantEntryMsg, protocmp.Transform()) {
-					t.Errorf("got %v; want %v", got, tc.wantEntryMsg)
-				}
+					if tc.wantEntryMsg != nil {
+						r, err := newReader(&b)
+						if err != nil {
+							t.Fatal(err)
+						}
+						_, _ = r.readHeader()
+						e, err := r.readEntry()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						got := e.msg.msg.(*ipb.Item)
+						if !cmp.Equal(got, tc.wantEntryMsg, protocmp.Transform()) {
+							t.Errorf("got %v; want %v", got, tc.wantEntryMsg)
+						}
+					}
+				}()
 			}
-		}()
+		})
 	}
 }
 
@@ -612,10 +661,10 @@ func TestOutOfOrderStreamReplay(t *testing.T) {
 	defer srv.stop()
 
 	// Replay in the same order.
-	buf := record(t, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
+	buf := record(t, "binary", func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
 	replay(t, buf, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
 
 	// Replay in a different order.
-	buf = record(t, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
+	buf = record(t, "binary", func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
 	replay(t, buf, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 2, 1) })
 }

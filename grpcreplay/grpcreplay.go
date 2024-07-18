@@ -258,6 +258,7 @@ type Replayer struct {
 	opts    *ReplayerOptions
 	r       reader
 	initial []byte // initial state
+	conn    *grpc.ClientConn
 
 	mu      sync.Mutex
 	calls   []*call
@@ -406,7 +407,9 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn.Close()
+	// Save the connection to close it later.
+	// Closing it now causes an error if the caller closes the client during the replay.
+	rep.conn = conn
 	srv.Stop()
 	return conn, nil
 }
@@ -416,6 +419,7 @@ func (rep *Replayer) Initial() []byte { return rep.initial }
 
 // Close closes the Replayer.
 func (rep *Replayer) Close() error {
+	rep.conn.Close()
 	return nil
 }
 

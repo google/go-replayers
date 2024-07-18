@@ -14,23 +14,44 @@
 
 # Makefile for building Go files from protos.
 
-# Change these to match your environment.
-PROTOC=$(HOME)/bin/protoc
-PROTOC_GO_PLUGIN_DIR=$(GOPATH)/bin
+MODULE_PATH=github.com/google/go-replayers/grpcreplay
 
-# The repo github.com/google/protobuf.
-PROTOBUF_REPO=$(HOME)/git-repos/google/protobuf
+all: grpcreplay/grpcreplay.pb.go intstore/intstore.pb.go
 
-gen-protos:  sync-protobuf
-	for d in *; do \
-            if [ -d $$d ]; then \
-	        PATH=$(PATH):$(PROTOC_GO_PLUGIN_DIR) \
-	        $(PROTOC) --go_out=plugins=grpc:$$d \
-	        -I $$d -I $(PROTOBUF_REPO)/src $$d/*.proto; \
-            fi \
-	done
+grpcreplay/grpcreplay.pb.go: proto-prereqs 
+	cd grpcreplay; \
+	protoc --go_out=. --go-grpc_out=. -I $(PROTOBUF_DIR)/src -I . *.proto && \
+	mv $(MODULE_PATH)/proto/grpcreplay/grpcreplay.pb.go . && \
+	rmdir -p $(MODULE_PATH)/proto/grpcreplay
 
+intstore/intstore.pb.go: proto-prereqs
+	cd intstore; \
+	protoc --go_out=. --go-grpc_out=. -I $(PROTOBUF_DIR)/src -I . *.proto && \
+	mv $(MODULE_PATH)/proto/intstore/intstore.pb.go . && \
+	mv $(MODULE_PATH)/proto/intstore/intstore_grpc.pb.go . && \
+	rmdir -p $(MODULE_PATH)/proto/intstore
 
-sync-protobuf:
-	cd $(PROTOBUF_REPO); git pull
+proto-prereqs: protoc protoc-gen-go protoc-gen-go-grpc $(PROTOBUF_DIR)/src  	
 
+.PHONY: proto-prereqs
+
+protoc:
+	@echo $(PATH)
+	@if [ -z $$(which protoc) ]; then \
+		echo >&2 "add protoc to your path; download it from https://github.com/protocolbuffers/protobuf/releases"; \
+		exit 1; \
+	fi
+
+protoc-gen-go:
+	if [ -z $$(which $@) ]; then \
+		go install google.golang.org/protobuf/cmd/$(@)@latest; \
+	fi
+
+protoc-gen-go-grpc:
+	if [ -z $$(which $@) ]; then \
+		go install google.golang.org/grpc/cmd/$(@)@latest; \
+	fi
+	
+$(PROTOBUF_DIR)/src:
+	@echo >&2 "download the protobuf release from https://github.com/protocolbuffers/protobuf/releases and set PROTOBUF_DIR to its location"
+	@exit 1

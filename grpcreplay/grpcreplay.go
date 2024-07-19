@@ -15,9 +15,7 @@
 package grpcreplay
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -40,7 +38,7 @@ import (
 type Recorder struct {
 	opts *RecorderOptions
 	mu   sync.Mutex
-	w    *bufio.Writer
+	w    writer
 	f    *os.File
 	next int
 	err  error
@@ -59,6 +57,9 @@ type RecorderOptions struct {
 	// the function returns an error, the error will be returned to the client.
 	// Streaming RPCs are not supported.
 	BeforeWrite func(method string, msg proto.Message) error
+
+	// Write the output file as human-readable text rather than binary.
+	Text bool
 }
 
 // NewRecorder creates a recorder that writes to filename.
@@ -83,11 +84,19 @@ func NewRecorderWriter(w io.Writer, opts *RecorderOptions) (*Recorder, error) {
 	if opts == nil {
 		opts = &RecorderOptions{}
 	}
-	bw := bufio.NewWriter(w)
-	if err := writeHeader(bw, opts.Initial); err != nil {
+	var ww writer
+	if opts.Text {
+		ww = &textWriter{w}
+	} else {
+		ww = &binaryWriter{w}
+	}
+	if err := ww.writeMagic(); err != nil {
 		return nil, err
 	}
-	return &Recorder{w: bw, opts: opts, next: 1}, nil
+	if err := ww.writeHeader(opts.Initial); err != nil {
+		return nil, err
+	}
+	return &Recorder{w: ww, opts: opts, next: 1}, nil
 }
 
 // DialOptions returns the options that must be passed to grpc.Dial
@@ -106,13 +115,10 @@ func (r *Recorder) Close() error {
 	if r.err != nil {
 		return r.err
 	}
-	err := r.w.Flush()
 	if r.f != nil {
-		if err2 := r.f.Close(); err == nil {
-			err = err2
-		}
+		return r.f.Close()
 	}
-	return err
+	return nil
 }
 
 // Intercepts all unary (non-stream) RPCs.
@@ -165,7 +171,7 @@ func (r *Recorder) writeEntry(e *entry) (int, error) {
 	if r.err != nil {
 		return 0, r.err
 	}
-	err := writeEntry(r.w, e)
+	err := r.w.writeEntry(e)
 	if err != nil {
 		r.err = err
 		return 0, err
@@ -250,6 +256,7 @@ func (rcs *recClientStream) CloseSend() error {
 // A Replayer replays a set of RPCs saved by a Recorder.
 type Replayer struct {
 	opts    *ReplayerOptions
+	r       reader
 	initial []byte // initial state
 
 	mu      sync.Mutex
@@ -299,8 +306,12 @@ func NewReplayerReader(r io.Reader, opts *ReplayerOptions) (*Replayer, error) {
 	if opts == nil {
 		opts = &ReplayerOptions{}
 	}
-	rep := &Replayer{opts: opts}
-	if err := rep.read(r); err != nil {
+	rr, err := newReader(r)
+	if err != nil {
+		return nil, err
+	}
+	rep := &Replayer{opts: opts, r: rr}
+	if err := rep.read(); err != nil {
 		return nil, err
 	}
 	return rep, nil
@@ -309,9 +320,8 @@ func NewReplayerReader(r io.Reader, opts *ReplayerOptions) (*Replayer, error) {
 // read reads the stream of recorded entries.
 // It matches requests with responses, with each pair grouped
 // into a call struct.
-func (rep *Replayer) read(r io.Reader) error {
-	r = bufio.NewReader(r)
-	bytes, err := readHeader(r)
+func (rep *Replayer) read() error {
+	bytes, err := rep.r.readHeader()
 	if err != nil {
 		return err
 	}
@@ -320,7 +330,7 @@ func (rep *Replayer) read(r io.Reader) error {
 	callsByIndex := map[int]*call{}
 	streamsByIndex := map[int]*stream{}
 	for i := 1; ; i++ {
-		e, err := readEntry(r)
+		e, err := rep.r.readEntry()
 		if err != nil {
 			return err
 		}
@@ -555,13 +565,17 @@ func Fprint(w io.Writer, filename string) error {
 // FprintReader reads the entries from r and writes them to w in human-readable form.
 // It is intended for debugging.
 func FprintReader(w io.Writer, r io.Reader) error {
-	initial, err := readHeader(r)
+	rr, err := newReader(r)
+	if err != nil {
+		return err
+	}
+	initial, err := rr.readHeader()
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "initial state: %q\n", string(initial))
 	for i := 1; ; i++ {
-		e, err := readEntry(r)
+		e, err := rr.readEntry()
 		if err != nil {
 			return err
 		}
@@ -607,6 +621,59 @@ func (e1 *entry) equal(e2 *entry) bool {
 		e1.refIndex == e2.refIndex
 }
 
+func (e *entry) toProto() (*pb.Entry, error) {
+	var m proto.Message
+	if e.msg.err != nil && e.msg.err != io.EOF {
+		s, ok := status.FromError(e.msg.err)
+		if !ok {
+			return nil, fmt.Errorf("grpcreplay: error %v is not a Status", e.msg.err)
+		}
+		m = s.Proto()
+	} else {
+		m = e.msg.msg
+	}
+	var a *anypb.Any
+	var err error
+	if m != nil {
+		a, err = anypb.New(m)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &pb.Entry{
+		Kind:     e.kind,
+		Method:   e.method,
+		Message:  a,
+		IsError:  e.msg.err != nil,
+		RefIndex: int32(e.refIndex),
+	}, nil
+}
+
+func protoToEntry(pe *pb.Entry) (*entry, error) {
+	var msg message
+	if pe.Message != nil {
+		a, err := pe.Message.UnmarshalNew()
+		if err != nil {
+			return nil, err
+		}
+		if pe.IsError {
+			msg.err = status.ErrorProto(a.ProtoReflect().Interface().(*spb.Status))
+		} else {
+			msg.msg = a.ProtoReflect().Interface()
+		}
+	} else if pe.IsError {
+		msg.err = io.EOF
+	} else if pe.Kind != pb.Entry_CREATE_STREAM {
+		return nil, errors.New("grpcreplay: entry with nil message and false is_error")
+	}
+	return &entry{
+		kind:     pe.Kind,
+		method:   pe.Method,
+		msg:      msg,
+		refIndex: int(pe.RefIndex),
+	}, nil
+}
+
 func errEqual(e1, e2 error) bool {
 	if e1 == e2 {
 		return true
@@ -638,125 +705,46 @@ func (m *message) set(msg interface{}, err error) {
 //
 // Header format:
 //   magic string
-//   a record containing the bytes of the initial state
+//   initial state
 
-const magic = "RPCReplay"
-
-func writeHeader(w io.Writer, initial []byte) error {
-	if _, err := io.WriteString(w, magic); err != nil {
-		return err
-	}
-	return writeRecord(w, initial)
+type writer interface {
+	writeMagic() error
+	writeHeader(initial []byte) error
+	writeEntry(*entry) error
 }
 
-func readHeader(r io.Reader) ([]byte, error) {
-	var buf [len(magic)]byte
+type reader interface {
+	readHeader() ([]byte, error)
+	readEntry() (*entry, error)
+}
+
+// Initial file contents that indicate that this is a file generated by
+// this package, and whether it is text or binary.
+const (
+	binaryMagic = "RPCReplay"
+	textMagic   = "RPCReTxt1"
+)
+
+func init() {
+	if len(binaryMagic) != len(textMagic) {
+		panic("unequal magic lengths")
+	}
+}
+
+func newReader(r io.Reader) (reader, error) {
+	var buf [len(binaryMagic)]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		if err == io.EOF {
-			err = errors.New("rpcreplay: empty replay file")
+			err = errors.New("grpcreplay: empty replay file")
 		}
 		return nil, err
 	}
-	if string(buf[:]) != magic {
-		return nil, errors.New("rpcreplay: not a replay file (does not begin with magic string)")
+	switch string(buf[:]) {
+	case binaryMagic:
+		return newBinaryReader(r), nil
+	case textMagic:
+		return newTextReader(r), nil
+	default:
+		return nil, errors.New("unknown grpcreplay file type")
 	}
-	bytes, err := readRecord(r)
-	if err == io.EOF {
-		err = errors.New("rpcreplay: missing initial state")
-	}
-	return bytes, err
-}
-
-func writeEntry(w io.Writer, e *entry) error {
-	var m proto.Message
-	if e.msg.err != nil && e.msg.err != io.EOF {
-		s, ok := status.FromError(e.msg.err)
-		if !ok {
-			return fmt.Errorf("rpcreplay: error %v is not a Status", e.msg.err)
-		}
-		m = s.Proto()
-	} else {
-		m = e.msg.msg
-	}
-	var a *anypb.Any
-	var err error
-	if m != nil {
-		a, err = anypb.New(m)
-		if err != nil {
-			return err
-		}
-	}
-	pe := &pb.Entry{
-		Kind:     e.kind,
-		Method:   e.method,
-		Message:  a,
-		IsError:  e.msg.err != nil,
-		RefIndex: int32(e.refIndex),
-	}
-	bytes, err := proto.Marshal(pe)
-	if err != nil {
-		return err
-	}
-	return writeRecord(w, bytes)
-}
-
-// readEntry reads one entry from the replay file r.
-// At end of file, it returns (nil, nil).
-func readEntry(r io.Reader) (*entry, error) {
-	buf, err := readRecord(r)
-	if err == io.EOF {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var pe pb.Entry
-	if err := proto.Unmarshal(buf, &pe); err != nil {
-		return nil, err
-	}
-	var msg message
-	if pe.Message != nil {
-		a, err := pe.Message.UnmarshalNew()
-		if err != nil {
-			return nil, err
-		}
-		if pe.IsError {
-			msg.err = status.ErrorProto(a.ProtoReflect().Interface().(*spb.Status))
-		} else {
-			msg.msg = a.ProtoReflect().Interface()
-		}
-	} else if pe.IsError {
-		msg.err = io.EOF
-	} else if pe.Kind != pb.Entry_CREATE_STREAM {
-		return nil, errors.New("rpcreplay: entry with nil message and false is_error")
-	}
-	return &entry{
-		kind:     pe.Kind,
-		method:   pe.Method,
-		msg:      msg,
-		refIndex: int(pe.RefIndex),
-	}, nil
-}
-
-// A record consists of an unsigned 32-bit little-endian length L followed by L
-// bytes.
-
-func writeRecord(w io.Writer, data []byte) error {
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
-		return err
-	}
-	_, err := w.Write(data)
-	return err
-}
-
-func readRecord(r io.Reader) ([]byte, error) {
-	var size uint32
-	if err := binary.Read(r, binary.LittleEndian, &size); err != nil {
-		return nil, err
-	}
-	buf := make([]byte, size)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
 }

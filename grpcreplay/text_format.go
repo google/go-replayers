@@ -16,6 +16,7 @@ package grpcreplay
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"strconv"
@@ -62,14 +63,28 @@ func (w *textWriter) writeEntry(e *entry) error {
 }
 
 type textReader struct {
-	r *bufio.Reader
+	r    *bufio.Reader
+	file string
+	line int
 }
 
-func newTextReader(r io.Reader) *textReader {
-	return &textReader{bufio.NewReader(r)}
+func newTextReader(r io.Reader, file string) *textReader {
+	if file == "" {
+		file = "(unknown)"
+	}
+	return &textReader{
+		r:    bufio.NewReader(r),
+		file: file,
+		line: 0,
+	}
 }
 
-func (r *textReader) readHeader() ([]byte, error) {
+func (r *textReader) readHeader() (_ []byte, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%s:%d: %w", r.file, r.line, err)
+		}
+	}()
 	// There should a newline after reading magic.
 	if _, err := r.readLine(); err != nil {
 		return nil, err
@@ -91,7 +106,12 @@ func (r *textReader) readHeader() ([]byte, error) {
 
 // readEntry reads one entry from the replay file r.
 // At end of file, it returns (nil, nil).
-func (r *textReader) readEntry() (*entry, error) {
+func (r *textReader) readEntry() (_ *entry, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%s:%d: %w", r.file, r.line, err)
+		}
+	}()
 	// Read length.
 	line, err := r.readLine()
 	if err == io.EOF {
@@ -105,9 +125,10 @@ func (r *textReader) readEntry() (*entry, error) {
 		return nil, err
 	}
 	buf := make([]byte, n)
-	if _, err := r.r.Read(buf); err != nil {
+	if _, err := io.ReadFull(r.r, buf); err != nil {
 		return nil, err
 	}
+	r.line += bytes.Count(buf, []byte{'\n'})
 	var pe pb.Entry
 	if err := prototext.Unmarshal(buf, &pe); err != nil {
 		return nil, err
@@ -121,5 +142,6 @@ func (r *textReader) readLine() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.line++
 	return line[:len(line)-1], nil
 }

@@ -47,7 +47,7 @@ var formats = []struct {
 	{
 		"text",
 		func(w io.Writer) writer { return &textWriter{w} },
-		func(r io.Reader) reader { return newTextReader(r) },
+		func(r io.Reader) reader { return newTextReader(r, "") },
 	},
 }
 
@@ -60,7 +60,7 @@ func TestNewReader(t *testing.T) {
 		{textMagic, reflect.TypeOf(&textReader{})},
 	} {
 		r := strings.NewReader(test.data)
-		rr, err := newReader(r)
+		rr, err := newReader(r, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,7 +138,7 @@ func TestRecord(t *testing.T) {
 	for _, format := range formats {
 		t.Run(format.name, func(t *testing.T) {
 			buf := record(t, format.name, testService)
-			r, err := newReader(buf)
+			r, err := newReader(buf, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -534,7 +534,7 @@ func TestRecorderBeforeFunc(t *testing.T) {
 					r.Close()
 
 					if tc.wantEntryMsg != nil {
-						r, err := newReader(&b)
+						r, err := newReader(&b, "")
 						if err != nil {
 							t.Fatal(err)
 						}

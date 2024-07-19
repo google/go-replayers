@@ -299,15 +299,19 @@ func NewReplayer(filename string, opts *ReplayerOptions) (*Replayer, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return NewReplayerReader(f, opts)
+	return newReplayerReader(f, filename, opts)
 }
 
 // NewReplayerReader creates a Replayer that reads from r.
 func NewReplayerReader(r io.Reader, opts *ReplayerOptions) (*Replayer, error) {
+	return newReplayerReader(r, "", opts)
+}
+
+func newReplayerReader(r io.Reader, file string, opts *ReplayerOptions) (*Replayer, error) {
 	if opts == nil {
 		opts = &ReplayerOptions{}
 	}
-	rr, err := newReader(r)
+	rr, err := newReader(r, file)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +573,7 @@ func Fprint(w io.Writer, filename string) error {
 // FprintReader reads the entries from r and writes them to w in human-readable form.
 // It is intended for debugging.
 func FprintReader(w io.Writer, r io.Reader) error {
-	rr, err := newReader(r)
+	rr, err := newReader(r, "")
 	if err != nil {
 		return err
 	}
@@ -735,7 +739,7 @@ func init() {
 	}
 }
 
-func newReader(r io.Reader) (reader, error) {
+func newReader(r io.Reader, file string) (reader, error) {
 	var buf [len(binaryMagic)]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		if err == io.EOF {
@@ -747,7 +751,7 @@ func newReader(r io.Reader) (reader, error) {
 	case binaryMagic:
 		return newBinaryReader(r), nil
 	case textMagic:
-		return newTextReader(r), nil
+		return newTextReader(r, file), nil
 	default:
 		return nil, errors.New("unknown grpcreplay file type")
 	}

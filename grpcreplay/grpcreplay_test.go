@@ -668,3 +668,40 @@ func TestOutOfOrderStreamReplay(t *testing.T) {
 	buf = record(t, "binary", func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 1, 2) })
 	replay(t, buf, func(t *testing.T, conn *grpc.ClientConn) { run(t, conn, 2, 1) })
 }
+
+func TestSetInitial(t *testing.T) {
+	srv := newIntStoreServer()
+	defer srv.stop()
+
+	buf := &bytes.Buffer{}
+	rec, err := NewRecorderWriter(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.SetInitial(initialState)
+	conn, err := grpc.Dial(srv.Addr,
+		append([]grpc.DialOption{grpc.WithInsecure()}, rec.DialOptions()...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	client := ipb.NewIntStoreClient(conn)
+	ctx := context.Background()
+	if _, err := client.Set(ctx, &ipb.Item{Name: "a", Value: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := NewReplayerReader(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := rep.Initial(), initialState; !bytes.Equal(got, want) {
+		t.Errorf("got initial state %q, want %q", got, want)
+	}
+
+}

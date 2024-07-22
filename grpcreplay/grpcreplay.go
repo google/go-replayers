@@ -36,12 +36,14 @@ import (
 
 // A Recorder records RPCs for later playback.
 type Recorder struct {
-	opts *RecorderOptions
-	mu   sync.Mutex
-	w    writer
-	f    *os.File
-	next int
-	err  error
+	opts        *RecorderOptions
+	mu          sync.Mutex
+	w           writer
+	f           *os.File
+	initial     []byte
+	wroteHeader bool
+	next        int
+	err         error
 }
 
 // RecorderOptions are options for a Recorder.
@@ -93,10 +95,20 @@ func NewRecorderWriter(w io.Writer, opts *RecorderOptions) (*Recorder, error) {
 	if err := ww.writeMagic(); err != nil {
 		return nil, err
 	}
-	if err := ww.writeHeader(opts.Initial); err != nil {
-		return nil, err
+	// if err := ww.writeHeader(opts.Initial); err != nil {
+	// 	return nil, err
+	// }
+	return &Recorder{w: ww, opts: opts, initial: opts.Initial, next: 1}, nil
+}
+
+// SetInitial is an alternative to [RecorderOptions.Initial] for providing the initial state.
+func (r *Recorder) SetInitial(initial []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.wroteHeader {
+		panic("grpcreplay: SetInitial called too late")
 	}
-	return &Recorder{w: ww, opts: opts, next: 1}, nil
+	r.initial = initial
 }
 
 // DialOptions returns the options that must be passed to grpc.Dial
@@ -170,6 +182,13 @@ func (r *Recorder) writeEntry(e *entry) (int, error) {
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return 0, r.err
+	}
+	if !r.wroteHeader {
+		if err := r.w.writeHeader(r.initial); err != nil {
+			r.err = err
+			return 0, err
+		}
+		r.wroteHeader = true
 	}
 	err := r.w.writeEntry(e)
 	if err != nil {
@@ -423,7 +442,9 @@ func (rep *Replayer) Initial() []byte { return rep.initial }
 
 // Close closes the Replayer.
 func (rep *Replayer) Close() error {
-	rep.conn.Close()
+	if rep.conn != nil {
+		rep.conn.Close()
+	}
 	return nil
 }
 

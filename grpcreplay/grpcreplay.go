@@ -27,6 +27,7 @@ import (
 	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -422,11 +423,11 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 			panic(err) // we should never get an error because we just connect and stop
 		}
 	}()
-	conn, err := grpc.Dial(l.Addr().String(),
-		append([]grpc.DialOption{grpc.WithInsecure()},
-			grpc.WithBlock(),
+	conn, err := grpc.NewClient(l.Addr().String(),
+		append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
 			grpc.WithUnaryInterceptor(rep.interceptUnary),
-			grpc.WithStreamInterceptor(rep.interceptStream))...)
+			grpc.WithStreamInterceptor(rep.interceptStream))...,
+	)
 	if err != nil {
 		return nil, err
 	}

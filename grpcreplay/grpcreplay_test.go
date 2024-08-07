@@ -703,5 +703,4 @@ func TestSetInitial(t *testing.T) {
 	if got, want := rep.Initial(), initialState; !bytes.Equal(got, want) {
 		t.Errorf("got initial state %q, want %q", got, want)
 	}
-
 }

@@ -55,11 +55,37 @@ func (w *textWriter) writeEntry(e *entry) error {
 	if err != nil {
 		return err
 	}
+	bytes = removeExtraSpaces(bytes)
 	if _, err := fmt.Fprintln(w.w, len(bytes)); err != nil {
 		return err
 	}
 	_, err = fmt.Fprint(w.w, string(bytes))
 	return err
+}
+
+// Remove extra spaces after a colon in "field: value" lines.
+// prototext inserts these to discourage its use as a stable format,
+// but the more stability the better to avoid spurious diffs in CLs.
+func removeExtraSpaces(bs []byte) []byte {
+	var buf bytes.Buffer
+	for len(bs) > 0 {
+		var line []byte
+		var nlfound bool
+		line, bs, nlfound = bytes.Cut(bs, []byte{'\n'})
+		field, value, found := bytes.Cut(line, []byte{':'})
+		if !found {
+			buf.Write(line)
+		} else {
+			buf.Write(field)
+			buf.WriteByte(':')
+			buf.WriteByte(' ')
+			buf.Write(bytes.TrimSpace(value))
+		}
+		if nlfound {
+			buf.WriteByte('\n')
+		}
+	}
+	return buf.Bytes()
 }
 
 type textReader struct {

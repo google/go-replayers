@@ -116,8 +116,8 @@ func (r *Recorder) SetInitial(initial []byte) {
 // to enable recording.
 func (r *Recorder) DialOptions() []grpc.DialOption {
 	return []grpc.DialOption{
-		grpc.WithUnaryInterceptor(r.interceptUnary),
-		grpc.WithStreamInterceptor(r.interceptStream),
+		grpc.WithUnaryInterceptor(r.InterceptUnary),
+		grpc.WithStreamInterceptor(r.InterceptStream),
 	}
 }
 
@@ -134,8 +134,8 @@ func (r *Recorder) Close() error {
 	return nil
 }
 
-// Intercepts all unary (non-stream) RPCs.
-func (r *Recorder) interceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+// InterceptUnary intercepts all unary (non-stream) RPCs.
+func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ereq := &entry{
 		kind:   pb.Entry_REQUEST,
 		method: method,
@@ -201,7 +201,8 @@ func (r *Recorder) writeEntry(e *entry) (int, error) {
 	return n, nil
 }
 
-func (r *Recorder) interceptStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+// InterceptStream intercepts all streaming RPCs.
+func (r *Recorder) InterceptStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	cstream, serr := streamer(ctx, desc, cc, method, opts...)
 	e := &entry{
 		kind:   pb.Entry_CREATE_STREAM,
@@ -426,8 +427,8 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 	}()
 	conn, err := grpc.NewClient(l.Addr().String(),
 		append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
-			grpc.WithUnaryInterceptor(rep.interceptUnary),
-			grpc.WithStreamInterceptor(rep.interceptStream))...,
+			grpc.WithUnaryInterceptor(rep.InterceptUnary),
+			grpc.WithStreamInterceptor(rep.InterceptStream))...,
 	)
 	if err != nil {
 		return nil, err
@@ -453,7 +454,8 @@ func (rep *Replayer) Close() error {
 	return nil
 }
 
-func (rep *Replayer) interceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
+// InterceptUnary intercepts all unary (non-stream) RPCs.
+func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 	mreq := req.(proto.Message)
 	if rep.opts.BeforeMatch != nil {
 		if err := rep.opts.BeforeMatch(method, mreq); err != nil {
@@ -471,7 +473,8 @@ func (rep *Replayer) interceptUnary(_ context.Context, method string, req, res i
 	return nil
 }
 
-func (rep *Replayer) interceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+// InterceptStream intercepts all streaming RPCs.
+func (rep *Replayer) InterceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
 	return &repClientStream{ctx: ctx, rep: rep, method: method}, nil
 }
 

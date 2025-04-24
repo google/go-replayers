@@ -24,10 +24,10 @@ import (
 	"os"
 	"sync"
 
+	v1proto "github.com/golang/protobuf/proto"
 	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -116,8 +116,8 @@ func (r *Recorder) SetInitial(initial []byte) {
 // to enable recording.
 func (r *Recorder) DialOptions() []grpc.DialOption {
 	return []grpc.DialOption{
-		grpc.WithUnaryInterceptor(r.InterceptUnary),
-		grpc.WithStreamInterceptor(r.InterceptStream),
+		grpc.WithUnaryInterceptor(r.interceptUnary),
+		grpc.WithStreamInterceptor(r.interceptStream),
 	}
 }
 
@@ -134,12 +134,21 @@ func (r *Recorder) Close() error {
 	return nil
 }
 
-// InterceptUnary intercepts all unary (non-stream) RPCs.
-func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+// convertMessage converts a legacy proto v1 message to v2.
+func convertMessage(v any) proto.Message {
+	p, ok := v.(proto.Message)
+	if !ok {
+		p = v1proto.MessageV2(v)
+	}
+	return p
+}
+
+// Intercepts all unary (non-stream) RPCs.
+func (r *Recorder) interceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ereq := &entry{
 		kind:   pb.Entry_REQUEST,
 		method: method,
-		msg:    message{msg: proto.Clone(req.(proto.Message))},
+		msg:    message{msg: proto.Clone(convertMessage(req))},
 	}
 
 	if r.opts.BeforeWrite != nil {
@@ -166,7 +175,7 @@ func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res i
 		r.mu.Unlock()
 		return ierr
 	}
-	eres.msg.set(proto.Clone(res.(proto.Message)), ierr)
+	eres.msg.set(proto.Clone(convertMessage(res)), ierr)
 	if r.opts.BeforeWrite != nil {
 		if err := r.opts.BeforeWrite(method, eres.msg.msg); err != nil {
 			return err
@@ -201,8 +210,7 @@ func (r *Recorder) writeEntry(e *entry) (int, error) {
 	return n, nil
 }
 
-// InterceptStream intercepts all streaming RPCs.
-func (r *Recorder) InterceptStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+func (r *Recorder) interceptStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	cstream, serr := streamer(ctx, desc, cc, method, opts...)
 	e := &entry{
 		kind:   pb.Entry_CREATE_STREAM,
@@ -280,7 +288,6 @@ type Replayer struct {
 	r       reader
 	initial []byte // initial state
 	conn    *grpc.ClientConn
-	srv     *grpc.Server
 
 	mu      sync.Mutex
 	calls   []*call
@@ -425,18 +432,18 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 			panic(err) // we should never get an error because we just connect and stop
 		}
 	}()
-	conn, err := grpc.NewClient(l.Addr().String(),
-		append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
-			grpc.WithUnaryInterceptor(rep.InterceptUnary),
-			grpc.WithStreamInterceptor(rep.InterceptStream))...,
-	)
+	conn, err := grpc.Dial(l.Addr().String(),
+		append([]grpc.DialOption{grpc.WithInsecure()},
+			grpc.WithBlock(),
+			grpc.WithUnaryInterceptor(rep.interceptUnary),
+			grpc.WithStreamInterceptor(rep.interceptStream))...)
 	if err != nil {
 		return nil, err
 	}
-	// Save the connection and server to close them later.
+	// Save the connection to close it later.
 	// Closing it now causes an error if the caller closes the client during the replay.
 	rep.conn = conn
-	rep.srv = srv
+	srv.Stop()
 	return conn, nil
 }
 
@@ -448,15 +455,11 @@ func (rep *Replayer) Close() error {
 	if rep.conn != nil {
 		rep.conn.Close()
 	}
-	if rep.srv != nil {
-		rep.srv.Stop()
-	}
 	return nil
 }
 
-// InterceptUnary intercepts all unary (non-stream) RPCs.
-func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
-	mreq := req.(proto.Message)
+func (rep *Replayer) interceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
+	mreq := convertMessage(req)
 	if rep.opts.BeforeMatch != nil {
 		if err := rep.opts.BeforeMatch(method, mreq); err != nil {
 			return err
@@ -469,12 +472,12 @@ func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res i
 	if call.response.err != nil {
 		return call.response.err
 	}
-	proto.Merge(res.(proto.Message), call.response.msg) // copy msg into res
+	mres := convertMessage(res)
+	proto.Merge(mres, call.response.msg) // copy msg into res
 	return nil
 }
 
-// InterceptStream intercepts all streaming RPCs.
-func (rep *Replayer) InterceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+func (rep *Replayer) interceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
 	return &repClientStream{ctx: ctx, rep: rep, method: method}, nil
 }
 
@@ -488,8 +491,9 @@ type repClientStream struct {
 func (rcs *repClientStream) Context() context.Context { return rcs.ctx }
 
 func (rcs *repClientStream) SendMsg(req interface{}) error {
+	mreq := convertMessage(req)
 	if rcs.str == nil {
-		if err := rcs.setStream(rcs.method, req.(proto.Message)); err != nil {
+		if err := rcs.setStream(rcs.method, mreq); err != nil {
 			return err
 		}
 	}
@@ -531,7 +535,7 @@ func (rcs *repClientStream) RecvMsg(m interface{}) error {
 	if msg.err != nil {
 		return msg.err
 	}
-	proto.Merge(m.(proto.Message), msg.msg) // copy msg into m
+	proto.Merge(convertMessage(m), msg.msg) // copy msg into m
 	return nil
 }
 
@@ -732,7 +736,7 @@ type message struct {
 func (m *message) set(msg interface{}, err error) {
 	m.err = err
 	if err != io.EOF && msg != nil {
-		m.msg = msg.(proto.Message)
+		m.msg = convertMessage(msg)
 	}
 }
 

@@ -17,6 +17,7 @@ package grpcreplay
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"reflect"
@@ -703,4 +704,21 @@ func TestSetInitial(t *testing.T) {
 	if got, want := rep.Initial(), initialState; !bytes.Equal(got, want) {
 		t.Errorf("got initial state %q, want %q", got, want)
 	}
+}
+
+// TestOversizeRecord is a regression test for OOM via unchecked readRecord size.
+// A crafted binary replay file with size > maxRecordSize must be rejected with
+// an error rather than causing a large allocation.
+func TestOversizeRecord(t *testing.T) {
+	var buf bytes.Buffer
+	// Write an oversize size field (maxRecordSize + 1).
+	binary.Write(&buf, binary.LittleEndian, uint32(maxRecordSize+1))
+
+	r := &binaryReader{r: &buf}
+	// readHeader() calls readRecord() internally.
+	_, err := r.readRecord()
+	if err == nil {
+		t.Fatal("readRecord should return an error for size > maxRecordSize")
+	}
+	t.Logf("correctly rejected oversized record: %v", err)
 }

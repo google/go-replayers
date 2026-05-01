@@ -17,11 +17,16 @@ package grpcreplay
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	"google.golang.org/protobuf/proto"
 )
+
+// maxRecordSize guards against OOM when parsing a crafted replay file.
+// gRPC's default max message size is 4 MiB; 64 MiB is a generous upper bound.
+const maxRecordSize = 64 << 20 // 64 MiB
 
 type binaryWriter struct {
 	w io.Writer
@@ -97,6 +102,9 @@ func (r *binaryReader) readRecord() ([]byte, error) {
 	var size uint32
 	if err := binary.Read(r.r, binary.LittleEndian, &size); err != nil {
 		return nil, err
+	}
+	if size > maxRecordSize {
+		return nil, fmt.Errorf("grpcreplay: record size %d exceeds maximum %d", size, maxRecordSize)
 	}
 	buf := make([]byte, size)
 	if _, err := io.ReadFull(r.r, buf); err != nil {

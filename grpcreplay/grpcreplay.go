@@ -135,7 +135,7 @@ func (r *Recorder) Close() error {
 }
 
 // InterceptUnary intercepts all unary (non-stream) RPCs.
-func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ereq := &entry{
 		kind:   pb.Entry_REQUEST,
 		method: method,
@@ -233,7 +233,7 @@ type recClientStream struct {
 
 func (rcs *recClientStream) Context() context.Context { return rcs.ctx }
 
-func (rcs *recClientStream) SendMsg(m interface{}) error {
+func (rcs *recClientStream) SendMsg(m any) error {
 	serr := rcs.cstream.SendMsg(m)
 	e := &entry{
 		kind:     pb.Entry_SEND,
@@ -246,7 +246,7 @@ func (rcs *recClientStream) SendMsg(m interface{}) error {
 	return serr
 }
 
-func (rcs *recClientStream) RecvMsg(m interface{}) error {
+func (rcs *recClientStream) RecvMsg(m any) error {
 	serr := rcs.cstream.RecvMsg(m)
 	e := &entry{
 		kind:     pb.Entry_RECV,
@@ -455,7 +455,7 @@ func (rep *Replayer) Close() error {
 }
 
 // InterceptUnary intercepts all unary (non-stream) RPCs.
-func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
+func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res any, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 	mreq := req.(proto.Message)
 	if rep.opts.BeforeMatch != nil {
 		if err := rep.opts.BeforeMatch(method, mreq); err != nil {
@@ -487,7 +487,7 @@ type repClientStream struct {
 
 func (rcs *repClientStream) Context() context.Context { return rcs.ctx }
 
-func (rcs *repClientStream) SendMsg(req interface{}) error {
+func (rcs *repClientStream) SendMsg(req any) error {
 	if rcs.str == nil {
 		if err := rcs.setStream(rcs.method, req.(proto.Message)); err != nil {
 			return err
@@ -515,7 +515,7 @@ func (rcs *repClientStream) setStream(method string, req proto.Message) error {
 	return nil
 }
 
-func (rcs *repClientStream) RecvMsg(m interface{}) error {
+func (rcs *repClientStream) RecvMsg(m any) error {
 	if rcs.str == nil {
 		// Receive before send; fall back to matching stream by method only.
 		if err := rcs.setStream(rcs.method, nil); err != nil {
@@ -729,7 +729,7 @@ type message struct {
 	err error
 }
 
-func (m *message) set(msg interface{}, err error) {
+func (m *message) set(msg any, err error) {
 	m.err = err
 	if err != io.EOF && msg != nil {
 		m.msg = msg.(proto.Message)

@@ -70,4 +70,10 @@ message Entry {
   bool is_error = 4;                // was response an error?
   int32 ref_index = 5;              // for RESPONSE, index of matching request;
                                     // for SEND/RECV, index of CREATE_STREAM
+
+  // Raw message bytes for messages that are not proto.Messages, such as the
+  // mem.BufferSlice produced by a custom gRPC codec (e.g. the zero-copy codec
+  // the GCS client installs for ReadObject). When set, message is unset and the
+  // bytes are replayed verbatim. Mutually exclusive with message.
+  bytes raw_message = 6;
 }

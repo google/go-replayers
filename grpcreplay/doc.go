@@ -18,37 +18,35 @@ to improve testing. Once you capture the calls of a test that runs against a rea
 service, you have an "automatic mock" that can be replayed against the same test,
 yielding a unit test that is fast and flake-free.
 
-Recording
+# Recording
 
 To record a sequence of gRPC calls to a file, create a Recorder and pass its
 DialOptions to grpc.Dial:
 
-    rec, err := rpcreplay.NewRecorder("service.replay", nil)
-    if err != nil { ... }
-    defer func() {
-    	if err := rec.Close(); err != nil { ... }
-    }()
-    conn, err := grpc.Dial(serverAddress, rec.DialOptions()...)
+	rec, err := rpcreplay.NewRecorder("service.replay", nil)
+	if err != nil { ... }
+	defer func() {
+		if err := rec.Close(); err != nil { ... }
+	}()
+	conn, err := grpc.Dial(serverAddress, rec.DialOptions()...)
 
 It is essential to close the Recorder when the interaction is finished.
 
 There is also a NewRecorderWriter function for capturing to an arbitrary
 io.Writer.
 
-
-Replaying
+# Replaying
 
 To replay a captured file, create a Replayer and ask it for a (fake) connection. We
 don't actually have to dial a server. (Since we're reading the file and not writing
 it, we don't have to be as careful about the error returned from Close).
 
-    rep, err := grpcreplay.NewReplayer("service.replay", nil)
-    if err != nil { ... }
-    defer rep.Close()
-    conn, err := rep.Connection()
+	rep, err := grpcreplay.NewReplayer("service.replay", nil)
+	if err != nil { ... }
+	defer rep.Close()
+	conn, err := rep.Connection()
 
-
-Initial State
+# Initial State
 
 A test might use random or time-sensitive values, for instance to create unique
 resources for isolation from other tests. The test therefore has initial values, such
@@ -58,24 +56,23 @@ this initial state and re-establish it on replay.
 To record the initial state, serialize it into a []byte and pass it as the second
 argument to NewRecorder:
 
-    timeNow := time.Now()
-    b, err := timeNow.MarshalBinary()
-    if err != nil { ... }
-    recordOpts := &grpcreplay.RecorderOptions{
-    	Initial: b,
-    }
-    rec, err := grpcreplay.NewRecorder("service.replay", recordOpts)
+	timeNow := time.Now()
+	b, err := timeNow.MarshalBinary()
+	if err != nil { ... }
+	recordOpts := &grpcreplay.RecorderOptions{
+		Initial: b,
+	}
+	rec, err := grpcreplay.NewRecorder("service.replay", recordOpts)
 
 On replay, get the bytes from Replayer.Initial:
 
-    rep, err := grpcreplay.NewReplayer("service.replay", nil)
-    if err != nil { ... }
-    defer rep.Close()
-    err = timeNow.UnmarshalBinary(rep.Initial())
-    if err != nil { ... }
+	rep, err := grpcreplay.NewReplayer("service.replay", nil)
+	if err != nil { ... }
+	defer rep.Close()
+	err = timeNow.UnmarshalBinary(rep.Initial())
+	if err != nil { ... }
 
-
-Callbacks
+# Callbacks
 
 Recorders and replayers have support for running callbacks before messages are
 written to or read from the replay file. A Recorder has a BeforeFunc that can modify
@@ -91,29 +88,29 @@ replaying, or RPC matching on replay will fail.
 
 A common way to analyze and modify the various messages is to use a type switch.
 
-    // Assume these types implement proto.Message.
-    type Greeting struct {
-    	line string
-    }
+	// Assume these types implement proto.Message.
+	type Greeting struct {
+		line string
+	}
 
-    type Farewell struct {
-    	line string
-    }
+	type Farewell struct {
+		line string
+	}
 
-    func sayings(method string, msg proto.Message) error {
-    	switch m := msg.(type) {
-    	case Greeting:
-    		msg.line = "Hi!"
-    		return nil
-    	case Farewell:
-    		msg.line = "Bye bye!"
-    		return nil
-    	default:
-    		return fmt.Errorf("unknown message type")
-    	}
-    }
+	func sayings(method string, msg proto.Message) error {
+		switch m := msg.(type) {
+		case Greeting:
+			msg.line = "Hi!"
+			return nil
+		case Farewell:
+			msg.line = "Bye bye!"
+			return nil
+		default:
+			return fmt.Errorf("unknown message type")
+		}
+	}
 
-Nondeterminism
+# Nondeterminism
 
 A nondeterministic program may invoke RPCs in a different order each time
 it is run. The order in which RPCs are called during recording may differ
@@ -131,7 +128,7 @@ name, since it has no other information at the time the stream is opened. Two st
 with the same method name that are started concurrently may replay in the wrong
 order.
 
-Other Replayer Differences
+# Other Replayer Differences
 
 Besides the differences in replay mentioned above, other differences may cause issues
 for some programs. We list them here.

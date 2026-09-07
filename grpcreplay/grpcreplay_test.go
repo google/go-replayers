@@ -867,6 +867,8 @@ func TestEmptyRecordingKeepsInitialState(t *testing.T) {
 	if got := rep.Initial(); !bytes.Equal(got, want) {
 		t.Errorf("got initial state %q, want %q", got, want)
 	}
+}
+
 // gRPC permits SendMsg and RecvMsg to be called concurrently on the same
 // bidirectional stream. Replaying such a stream must not race on the internal
 // stream selection, and a receive that happens to run first must not consume

@@ -15,6 +15,7 @@
 package grpcreplay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/mem"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -135,7 +137,7 @@ func (r *Recorder) Close() error {
 }
 
 // InterceptUnary intercepts all unary (non-stream) RPCs.
-func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+func (r *Recorder) InterceptUnary(ctx context.Context, method string, req, res any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 	ereq := &entry{
 		kind:   pb.Entry_REQUEST,
 		method: method,
@@ -233,7 +235,7 @@ type recClientStream struct {
 
 func (rcs *recClientStream) Context() context.Context { return rcs.ctx }
 
-func (rcs *recClientStream) SendMsg(m interface{}) error {
+func (rcs *recClientStream) SendMsg(m any) error {
 	serr := rcs.cstream.SendMsg(m)
 	e := &entry{
 		kind:     pb.Entry_SEND,
@@ -246,7 +248,7 @@ func (rcs *recClientStream) SendMsg(m interface{}) error {
 	return serr
 }
 
-func (rcs *recClientStream) RecvMsg(m interface{}) error {
+func (rcs *recClientStream) RecvMsg(m any) error {
 	serr := rcs.cstream.RecvMsg(m)
 	e := &entry{
 		kind:     pb.Entry_RECV,
@@ -455,7 +457,7 @@ func (rep *Replayer) Close() error {
 }
 
 // InterceptUnary intercepts all unary (non-stream) RPCs.
-func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res interface{}, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
+func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res any, _ *grpc.ClientConn, _ grpc.UnaryInvoker, _ ...grpc.CallOption) error {
 	mreq := req.(proto.Message)
 	if rep.opts.BeforeMatch != nil {
 		if err := rep.opts.BeforeMatch(method, mreq); err != nil {
@@ -487,7 +489,7 @@ type repClientStream struct {
 
 func (rcs *repClientStream) Context() context.Context { return rcs.ctx }
 
-func (rcs *repClientStream) SendMsg(req interface{}) error {
+func (rcs *repClientStream) SendMsg(req any) error {
 	if rcs.str == nil {
 		if err := rcs.setStream(rcs.method, req.(proto.Message)); err != nil {
 			return err
@@ -515,7 +517,7 @@ func (rcs *repClientStream) setStream(method string, req proto.Message) error {
 	return nil
 }
 
-func (rcs *repClientStream) RecvMsg(m interface{}) error {
+func (rcs *repClientStream) RecvMsg(m any) error {
 	if rcs.str == nil {
 		// Receive before send; fall back to matching stream by method only.
 		if err := rcs.setStream(rcs.method, nil); err != nil {
@@ -530,6 +532,18 @@ func (rcs *repClientStream) RecvMsg(m interface{}) error {
 	rcs.str.recvs = rcs.str.recvs[1:]
 	if msg.err != nil {
 		return msg.err
+	}
+	if msg.raw != nil {
+		// The message was recorded as raw bytes from a custom codec (e.g. the
+		// GCS zero-copy ReadObject codec). Deliver them into the caller's
+		// *mem.BufferSlice, mirroring what the codec's Unmarshal does.
+		bs, ok := m.(*mem.BufferSlice)
+		if !ok {
+			return fmt.Errorf("replayer: recorded raw message for stream %s but "+
+				"receiver is %T, want *mem.BufferSlice", rcs.method, m)
+		}
+		*bs = append(*bs, mem.SliceBuffer(msg.raw))
+		return nil
 	}
 	proto.Merge(m.(proto.Message), msg.msg) // copy msg into m
 	return nil
@@ -628,6 +642,8 @@ func FprintReader(w io.Writer, r io.Reader) error {
 			if _, err := w.Write(buf); err != nil {
 				return err
 			}
+		case e.msg.raw != nil:
+			fmt.Fprintf(w, ", raw message: %d bytes\n", len(e.msg.raw))
 		case e.msg.err != nil:
 			fmt.Fprintf(w, ", error: %v\n", e.msg.err)
 		default:
@@ -654,6 +670,7 @@ func (e1 *entry) equal(e2 *entry) bool {
 	return e1.kind == e2.kind &&
 		e1.method == e2.method &&
 		proto.Equal(e1.msg.msg, e2.msg.msg) &&
+		bytes.Equal(e1.msg.raw, e2.msg.raw) &&
 		errEqual(e1.msg.err, e2.msg.err) &&
 		e1.refIndex == e2.refIndex
 }
@@ -678,11 +695,12 @@ func (e *entry) toProto() (*pb.Entry, error) {
 		}
 	}
 	return &pb.Entry{
-		Kind:     e.kind,
-		Method:   e.method,
-		Message:  a,
-		IsError:  e.msg.err != nil,
-		RefIndex: int32(e.refIndex),
+		Kind:       e.kind,
+		Method:     e.method,
+		Message:    a,
+		RawMessage: e.msg.raw,
+		IsError:    e.msg.err != nil,
+		RefIndex:   int32(e.refIndex),
 	}, nil
 }
 
@@ -698,6 +716,8 @@ func protoToEntry(pe *pb.Entry) (*entry, error) {
 		} else {
 			msg.msg = a.ProtoReflect().Interface()
 		}
+	} else if pe.RawMessage != nil {
+		msg.raw = pe.RawMessage
 	} else if pe.IsError {
 		msg.err = io.EOF
 	} else if pe.Kind != pb.Entry_CREATE_STREAM {
@@ -723,16 +743,33 @@ func errEqual(e1, e2 error) bool {
 	return proto.Equal(s1.Proto(), s2.Proto())
 }
 
-// message holds either a single proto.Message or an error.
+// message holds a single message or an error. The message is normally a
+// proto.Message (msg), but RPCs that install a custom gRPC codec may hand the
+// stream raw bytes instead. The GCS client does this for ReadObject: it forces
+// a zero-copy codec and receives each message into a *mem.BufferSlice. For such
+// messages we record the raw wire bytes (raw) rather than a proto.Message.
+// At most one of msg and raw is set.
 type message struct {
 	msg proto.Message
+	raw []byte
 	err error
 }
 
-func (m *message) set(msg interface{}, err error) {
+func (m *message) set(msg any, err error) {
 	m.err = err
-	if err != io.EOF && msg != nil {
-		m.msg = msg.(proto.Message)
+	if err == io.EOF || msg == nil {
+		return
+	}
+	switch v := msg.(type) {
+	case proto.Message:
+		m.msg = v
+	case *mem.BufferSlice:
+		// Copy the bytes: gRPC frees the underlying buffers after RecvMsg
+		// returns, so we cannot retain a reference to them.
+		m.raw = v.Materialize()
+	default:
+		panic(fmt.Sprintf("grpcreplay: cannot record message of type %T; "+
+			"only proto.Message and *mem.BufferSlice are supported", msg))
 	}
 }
 

@@ -17,6 +17,7 @@ package grpcreplay
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"reflect"
@@ -29,6 +30,8 @@ import (
 	ipb "github.com/google/go-replayers/grpcreplay/proto/intstore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/mem"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -112,6 +115,12 @@ func TestEntryIO(t *testing.T) {
 					method:   "method",
 					msg:      message{err: io.EOF},
 					refIndex: 3,
+				},
+				{
+					kind:     rpb.Entry_RECV,
+					method:   "method",
+					msg:      message{raw: []byte{0, 1, 2, 3, 255}},
+					refIndex: 4,
 				},
 			} {
 				buf := &bytes.Buffer{}
@@ -703,4 +712,119 @@ func TestSetInitial(t *testing.T) {
 	if got, want := rep.Initial(), initialState; !bytes.Equal(got, want) {
 		t.Errorf("got initial state %q, want %q", got, want)
 	}
+}
+
+// TestOversizeRecord is a regression test for OOM via unchecked readRecord size.
+// A crafted binary replay file with size > maxRecordSize must be rejected with
+// an error rather than causing a large allocation.
+func TestOversizeRecord(t *testing.T) {
+	var buf bytes.Buffer
+	// Write an oversize size field (maxRecordSize + 1).
+	binary.Write(&buf, binary.LittleEndian, uint32(maxRecordSize+1))
+
+	r := &binaryReader{r: &buf}
+	// readHeader() calls readRecord() internally.
+	_, err := r.readRecord()
+	if err == nil {
+		t.Fatal("readRecord should return an error for size > maxRecordSize")
+	}
+	t.Logf("correctly rejected oversized record: %v", err)
+}
+
+// TestRawMessageRecord verifies that message.set records a *mem.BufferSlice as
+// raw bytes instead of panicking. This is the case hit by the GCS client's
+// zero-copy ReadObject codec, which receives messages into a *mem.BufferSlice
+// rather than a proto.Message.
+func TestRawMessageRecord(t *testing.T) {
+	raw := []byte{0x0a, 0x03, 1, 2, 3}
+	bs := mem.BufferSlice{mem.SliceBuffer(raw)}
+
+	var m message
+	m.set(&bs, nil)
+
+	if m.msg != nil {
+		t.Errorf("msg = %v, want nil", m.msg)
+	}
+	if !bytes.Equal(m.raw, raw) {
+		t.Errorf("raw = %v, want %v", m.raw, raw)
+	}
+	// set must copy the bytes, since gRPC frees the source buffers after Recv.
+	if &m.raw[0] == &raw[0] {
+		t.Error("raw shares backing array with source; set must copy")
+	}
+}
+
+// TestReplayRawRecv verifies that a raw recorded message is delivered into the
+// caller's *mem.BufferSlice on replay, mirroring the custom codec's Unmarshal.
+func TestReplayRawRecv(t *testing.T) {
+	raw := []byte{5, 6, 7, 8}
+	rcs := &repClientStream{
+		method: "/foo/Bar",
+		str: &stream{
+			method: "/foo/Bar",
+			recvs:  []message{{raw: raw}},
+		},
+	}
+	var bs mem.BufferSlice
+	if err := rcs.RecvMsg(&bs); err != nil {
+		t.Fatal(err)
+	}
+	if got := bs.Materialize(); !bytes.Equal(got, raw) {
+		t.Errorf("got %v, want %v", got, raw)
+	}
+}
+
+// TestRawMessageRoundTrip records a raw stream receive and replays it end to
+// end through a Recorder and Replayer, exercising the full write/read path.
+func TestRawMessageRoundTrip(t *testing.T) {
+	const method = "/foo/Bar"
+	raw := []byte{9, 8, 7, 6, 5}
+
+	buf := &bytes.Buffer{}
+	rec, err := NewRecorderWriter(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Record a CREATE_STREAM followed by a RECV of raw bytes.
+	if _, err := rec.writeEntry(&entry{kind: rpb.Entry_CREATE_STREAM, method: method}); err != nil {
+		t.Fatal(err)
+	}
+	rcs := &recClientStream{rec: rec, cstream: rawRecvStream{raw}, refIndex: 1}
+	var recvBS mem.BufferSlice
+	if err := rcs.RecvMsg(&recvBS); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := NewReplayerReader(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rrcs := &repClientStream{method: method, rep: rep}
+	var got mem.BufferSlice
+	if err := rrcs.RecvMsg(&got); err != nil {
+		t.Fatal(err)
+	}
+	if b := got.Materialize(); !bytes.Equal(b, raw) {
+		t.Errorf("replayed raw = %v, want %v", b, raw)
+	}
+}
+
+// rawRecvStream is a minimal grpc.ClientStream whose RecvMsg fills the caller's
+// *mem.BufferSlice, imitating a custom zero-copy codec.
+type rawRecvStream struct {
+	raw []byte
+}
+
+func (rawRecvStream) Header() (metadata.MD, error) { return nil, nil }
+func (rawRecvStream) Trailer() metadata.MD         { return nil }
+func (rawRecvStream) CloseSend() error             { return nil }
+func (rawRecvStream) Context() context.Context     { return context.Background() }
+func (rawRecvStream) SendMsg(any) error            { return nil }
+func (s rawRecvStream) RecvMsg(m any) error {
+	bs := m.(*mem.BufferSlice)
+	*bs = append(*bs, mem.SliceBuffer(s.raw))
+	return nil
 }

@@ -131,6 +131,21 @@ func (r *Recorder) Close() error {
 	if r.err != nil {
 		return r.err
 	}
+	// The header is written lazily, by the first writeEntry, so that SetInitial
+	// can be called after the Recorder is constructed. A recording that saw no
+	// RPCs at all would otherwise be left with just the magic number, and the
+	// Replayer would reject it with "missing initial state". Write it here so
+	// that an empty recording is still a valid replay file.
+	if !r.wroteHeader {
+		if err := r.w.writeHeader(r.initial); err != nil {
+			r.err = err
+			if r.f != nil {
+				_ = r.f.Close()
+			}
+			return err
+		}
+		r.wroteHeader = true
+	}
 	if r.f != nil {
 		return r.f.Close()
 	}

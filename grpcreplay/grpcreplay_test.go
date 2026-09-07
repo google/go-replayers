@@ -830,6 +830,43 @@ func (s rawRecvStream) RecvMsg(m any) error {
 	return nil
 }
 
+// A recording that captured no RPCs at all must still produce a valid replay
+// file. The header is written lazily, so without Close writing it the file
+// holds only the magic number and the Replayer rejects it.
+func TestEmptyRecordingIsReplayable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	rec, err := NewRecorderWriter(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReplayerReader(bytes.NewReader(buf.Bytes()), nil); err != nil {
+		t.Fatalf("replaying an empty recording: %v", err)
+	}
+}
+
+// The same, but checking that SetInitial still reaches the header when no
+// entries are recorded.
+func TestEmptyRecordingKeepsInitialState(t *testing.T) {
+	buf := &bytes.Buffer{}
+	rec, err := NewRecorderWriter(buf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("initial state")
+	rec.SetInitial(want)
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewReplayerReader(bytes.NewReader(buf.Bytes()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Initial(); !bytes.Equal(got, want) {
+		t.Errorf("got initial state %q, want %q", got, want)
+	}
 // gRPC permits SendMsg and RecvMsg to be called concurrently on the same
 // bidirectional stream. Replaying such a stream must not race on the internal
 // stream selection, and a receive that happens to run first must not consume

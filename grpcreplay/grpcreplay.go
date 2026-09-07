@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	pb "github.com/google/go-replayers/grpcreplay/proto/grpcreplay"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
@@ -321,6 +322,25 @@ type call struct {
 	response message
 }
 
+// streamSelectTimeout bounds how long a receive that arrived before any send
+// waits for that send to identify the stream. It is a variable so tests can
+// shorten it; see awaitStream.
+var streamSelectTimeout = 5 * time.Second
+
+// methodMaySend reports whether any recorded stream for method that has not yet
+// been matched recorded a send. If none did, a receive on a stream of this
+// method cannot be waiting on a send.
+func (rep *Replayer) methodMaySend(method string) bool {
+	rep.mu.Lock()
+	defer rep.mu.Unlock()
+	for _, s := range rep.streams {
+		if s != nil && s.method == method && len(s.sends) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // A stream represents a gRPC stream, with an initial create-stream call, followed by
 // zero or more sends and/or receives.
 type stream struct {
@@ -492,19 +512,32 @@ func (rep *Replayer) InterceptUnary(_ context.Context, method string, req, res a
 
 // InterceptStream intercepts all streaming RPCs.
 func (rep *Replayer) InterceptStream(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, method string, _ grpc.Streamer, _ ...grpc.CallOption) (grpc.ClientStream, error) {
-	return &repClientStream{ctx: ctx, rep: rep, method: method}, nil
+	return newRepClientStream(ctx, rep, method), nil
+}
+
+func newRepClientStream(ctx context.Context, rep *Replayer, method string) *repClientStream {
+	return &repClientStream{ctx: ctx, rep: rep, method: method, selected: make(chan struct{})}
 }
 
 type repClientStream struct {
 	ctx    context.Context
 	rep    *Replayer
 	method string
-	str    *stream
+
+	// gRPC allows SendMsg and RecvMsg to be called concurrently on the same
+	// stream, so everything below is guarded.
+	mu sync.Mutex
+	// str is the recorded stream this one was matched to, chosen on the first
+	// send or receive. selected is closed when it is set.
+	str      *stream
+	selected chan struct{}
 }
 
 func (rcs *repClientStream) Context() context.Context { return rcs.ctx }
 
 func (rcs *repClientStream) SendMsg(req any) error {
+	rcs.mu.Lock()
+	defer rcs.mu.Unlock()
 	if rcs.str == nil {
 		if err := rcs.setStream(rcs.method, req.(proto.Message)); err != nil {
 			return err
@@ -520,6 +553,7 @@ func (rcs *repClientStream) SendMsg(req any) error {
 	return msg.err
 }
 
+// setStream matches this stream to a recorded one. rcs.mu must be held.
 func (rcs *repClientStream) setStream(method string, req proto.Message) error {
 	str := rcs.rep.extractStream(method, req)
 	if str == nil {
@@ -529,16 +563,56 @@ func (rcs *repClientStream) setStream(method string, req proto.Message) error {
 		return str.createErr
 	}
 	rcs.str = str
+	if rcs.selected != nil {
+		close(rcs.selected)
+	}
 	return nil
 }
 
+// awaitStream picks the recorded stream for a receive that arrived before this
+// stream sent anything.
+//
+// Matching on the method alone is a last resort: it consumes an arbitrary
+// recorded stream, so two concurrent streams on the same method can be crossed,
+// or one can be left with nothing to match. Since gRPC allows SendMsg and
+// RecvMsg to run concurrently, the send that would identify this stream by its
+// first request may simply not have happened yet, so wait for it when one is
+// still possible. rcs.mu must not be held.
+func (rcs *repClientStream) awaitStream() error {
+	matchOnMethod := func() error {
+		rcs.mu.Lock()
+		defer rcs.mu.Unlock()
+		if rcs.str != nil { // a concurrent send got there first
+			return nil
+		}
+		return rcs.setStream(rcs.method, nil)
+	}
+	if !rcs.rep.methodMaySend(rcs.method) {
+		// Nothing recorded for this method sent anything, so the server spoke
+		// first and there is no ambiguity to wait out.
+		return matchOnMethod()
+	}
+	select {
+	case <-rcs.selected:
+		return nil
+	case <-rcs.ctx.Done():
+		return rcs.ctx.Err()
+	case <-time.After(streamSelectTimeout):
+		// No send arrived. Fall back rather than block the caller forever.
+		return matchOnMethod()
+	}
+}
+
 func (rcs *repClientStream) RecvMsg(m any) error {
+	rcs.mu.Lock()
 	if rcs.str == nil {
-		// Receive before send; fall back to matching stream by method only.
-		if err := rcs.setStream(rcs.method, nil); err != nil {
+		rcs.mu.Unlock()
+		if err := rcs.awaitStream(); err != nil {
 			return err
 		}
+		rcs.mu.Lock()
 	}
+	defer rcs.mu.Unlock()
 	if len(rcs.str.recvs) == 0 {
 		return fmt.Errorf("replayer: no more receives for stream %s, created at index %d",
 			rcs.str.method, rcs.str.createIndex)

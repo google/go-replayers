@@ -22,6 +22,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -802,7 +803,7 @@ func TestRawMessageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rrcs := &repClientStream{method: method, rep: rep}
+	rrcs := newRepClientStream(context.Background(), rep, method)
 	var got mem.BufferSlice
 	if err := rrcs.RecvMsg(&got); err != nil {
 		t.Fatal(err)
@@ -866,4 +867,65 @@ func TestEmptyRecordingKeepsInitialState(t *testing.T) {
 	if got := rep.Initial(); !bytes.Equal(got, want) {
 		t.Errorf("got initial state %q, want %q", got, want)
 	}
+// gRPC permits SendMsg and RecvMsg to be called concurrently on the same
+// bidirectional stream. Replaying such a stream must not race on the internal
+// stream selection, and a receive that happens to run first must not consume
+// an arbitrary recorded stream of the same method.
+func TestConcurrentBidiStreamReplay(t *testing.T) {
+	// Each stream sends a distinct first item, so a correct replay can tell
+	// them apart. A receiving goroutine races the send on every stream.
+	chat := func(t *testing.T, conn *grpc.ClientConn, name string) {
+		t.Helper()
+		client := ipb.NewIntStoreClient(conn)
+		cc, err := client.StreamChat(context.Background())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		got := make(chan *ipb.Item, 1)
+		errc := make(chan error, 1)
+		go func() {
+			item, err := cc.Recv()
+			if err != nil {
+				errc <- err
+				return
+			}
+			got <- item
+		}()
+		want := &ipb.Item{Name: name, Value: 1}
+		if err := cc.Send(want); err != nil {
+			t.Error(err)
+			return
+		}
+		select {
+		case err := <-errc:
+			t.Errorf("stream %s: recv: %v", name, err)
+			return
+		case item := <-got:
+			// The echo server returns what it was sent, so a stream that was
+			// matched to the wrong recording shows up as the wrong name.
+			if item.Name != name {
+				t.Errorf("stream %s: got item %q, want %q (streams were crossed)", name, item.Name, name)
+			}
+		}
+		_ = cc.CloseSend()
+	}
+
+	run := func(t *testing.T, conn *grpc.ClientConn) {
+		var wg sync.WaitGroup
+		for _, name := range []string{"a", "b", "c", "d"} {
+			wg.Add(1)
+			go func(name string) {
+				defer wg.Done()
+				chat(t, conn, name)
+			}(name)
+		}
+		wg.Wait()
+	}
+
+	srv := newIntStoreServer()
+	defer srv.stop()
+
+	buf := record(t, "binary", run)
+	replay(t, buf, run)
 }

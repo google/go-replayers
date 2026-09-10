@@ -459,7 +459,9 @@ func (rep *Replayer) Connection() (*grpc.ClientConn, error) {
 	}
 	go func() {
 		if err := srv.Serve(l); err != nil {
-			panic(err) // we should never get an error because we just connect and stop
+			// We shouldn't get an error because we just connect and stop,
+			// unless the caller closes the connection before this goroutine
+			// got a chance to Serve.
 		}
 	}()
 	conn, err := grpc.NewClient(l.Addr().String(),
